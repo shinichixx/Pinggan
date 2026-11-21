@@ -1,6 +1,7 @@
 import SwiftUI
 import PhotosUI
 import UIKit
+import CoreImage
 
 struct AddRequest: Identifiable {
     let id = UUID()
@@ -20,8 +21,9 @@ struct MealInfo {
 struct DraftDish: Identifiable {
     let id = UUID()
     var dish: Dish
-    var box: [Double]?
-    var preview: UIImage?
+    var box: [Double]? = nil
+    var lifted: CIImage? = nil
+    var preview: UIImage? = nil
     var mine = true
 }
 
@@ -30,14 +32,10 @@ struct ReviewDraft {
     var info: MealInfo
     var dishes: [DraftDish]
     var note: String?
+    var fromAI = true
 
-    static func from(_ found: [AIDish], image: UIImage, info: MealInfo) -> ReviewDraft {
-        let base = ImageStore.normalized(image, maxSide: 1024)
-        let dishes = found.map { a in
-            DraftDish(dish: Dish(name: a.name, kcal: a.kcal ?? 0, protein: a.protein_g ?? 0, carbs: a.carbs_g ?? 0, fat: a.fat_g ?? 0),
-                      box: a.box,
-                      preview: ImageStore.crop(base, box: a.box, maxSide: 160))
-        }
+    static func from(_ found: [FoundDish], image: UIImage, info: MealInfo) -> ReviewDraft {
+        let dishes = found.map { DraftDish(dish: $0.dish, box: $0.box, lifted: $0.lifted, preview: $0.preview) }
         if dishes.isEmpty {
             return ReviewDraft(image: image, info: info, dishes: [DraftDish(dish: Dish())],
                                note: "No food was found in the photo. Tap the dish to type what it is.")
@@ -46,8 +44,12 @@ struct ReviewDraft {
     }
 
     static func blank(image: UIImage?, info: MealInfo, note: String?) -> ReviewDraft {
-        ReviewDraft(image: image, info: info, dishes: [DraftDish(dish: Dish())], note: note)
+        ReviewDraft(image: image, info: info, dishes: [DraftDish(dish: Dish())], note: note, fromAI: false)
     }
+}
+
+enum CaptureMode: Hashable {
+    case table, single, label
 }
 
 // MARK: - Add meal (camera page)
@@ -59,7 +61,7 @@ struct AddMealView: View {
     @StateObject private var loc = LocationHelper()
 
     @State private var image: UIImage?
-    @State private var singleDish = false
+    @State private var mode: CaptureMode = .table
     @State private var date: Date
     @State private var type: MealType
     @State private var place = ""
@@ -73,10 +75,11 @@ struct AddMealView: View {
     @State private var openedCamera = false
     @State private var pickerItem: PhotosPickerItem?
     @State private var showPlaces = false
-    @State private var analysing = false
+    @State private var working: String?
     @State private var errorText: String?
     @State private var draft: ReviewDraft?
     @State private var showReview = false
+    @State private var label: LabelBox?
 
     init(request: AddRequest) {
         self.request = request
@@ -93,56 +96,44 @@ struct AddMealView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(spacing: 14) {
-                    photoArea
-                    Picker("Photo", selection: $singleDish) {
-                        Text("Whole table").tag(false)
-                        Text("Single dish").tag(true)
-                    }
-                    .pickerStyle(.segmented)
+            ZStack {
+                PageBackground()
+                ScrollView {
+                    VStack(spacing: 16) {
+                        HStack {
+                            RoundNavButton(icon: "xmark") { dismiss() }
+                            Spacer()
+                            Text("What are you eating?").font(.q(19, .bold)).foregroundStyle(.white)
+                            Spacer()
+                            Color.clear.frame(width: 36, height: 36)
+                        }
+                        .padding(.top, 4)
 
-                    details
+                        photoArea
 
-                    if let errorText {
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text(errorText).font(.subheadline).foregroundStyle(.red)
-                            HStack {
-                                Button("Try again") { Task { await analyse() } }
-                                    .buttonStyle(.bordered)
-                                Button("Continue without AI") {
-                                    draft = .blank(image: image, info: info, note: nil)
-                                    showReview = true
-                                }
-                                .buttonStyle(.bordered)
+                        PillPicker(options: [(CaptureMode.table, "Whole table"), (CaptureMode.single, "Single dish"), (CaptureMode.label, "Food label")],
+                                   selection: $mode)
+
+                        details
+
+                        if let errorText { errorCard(errorText) }
+
+                        controls
+
+                        if image != nil && working == nil && errorText == nil {
+                            Button {
+                                Task { await process() }
+                            } label: {
+                                Label(mode == .label ? "Read the label again" : "Find dishes again", systemImage: "sparkles")
+                                    .font(.q(14, .bold)).foregroundStyle(Theme.coral)
                             }
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding()
-                        .background(RoundedRectangle(cornerRadius: 14).fill(Color.red.opacity(0.08)))
                     }
-
-                    controls
-
-                    if image != nil && !analysing && errorText == nil {
-                        Button {
-                            Task { await analyse() }
-                        } label: {
-                            Label("Find dishes again", systemImage: "sparkles")
-                        }
-                        .font(.subheadline)
-                    }
-                }
-                .padding()
-            }
-            .navigationTitle("What are you eating?")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button { dismiss() } label: { Image(systemName: "xmark") }
-                        .accessibilityLabel("Close")
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 30)
                 }
             }
+            .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(isPresented: $showReview) {
                 if let draft {
                     ReviewView(draft: draft, onSaved: { dismiss() })
@@ -161,6 +152,11 @@ struct AddMealView: View {
                 place = c.name
                 if let la = c.lat, let lo = c.lon { lat = la; lon = lo }
                 placeAuto = false
+            }
+        }
+        .sheet(item: $label) { box in
+            ProductSheet(product: box.scan.product ?? Product(barcode: box.scan.barcode), source: box.scan.source) { dish, _ in
+                labelAdded(dish)
             }
         }
         .onAppear {
@@ -182,26 +178,26 @@ struct AddMealView: View {
     // MARK: Pieces
 
     private var photoArea: some View {
-        Theme.photoBG
-            .frame(height: 260)
+        RadialGradient(colors: [Color(hex: 0x7A3B26), Theme.photoBG], center: .center, startRadius: 0, endRadius: 220)
+            .frame(height: 280)
             .overlay {
                 if let image {
                     Image(uiImage: image).resizable().scaledToFill()
                 } else {
                     VStack(spacing: 8) {
-                        Image(systemName: "camera").font(.system(size: 34))
-                        Text("Take a photo of your food").font(.subheadline)
+                        Image(systemName: mode == .label ? "barcode.viewfinder" : "camera").font(.system(size: 36))
+                        Text(mode == .label ? "Photo the nutrition label or barcode" : "Take a photo of your food").font(.q(15, .semibold))
                     }
                     .foregroundStyle(.white.opacity(0.85))
                 }
             }
             .overlay {
-                if analysing {
+                if let working {
                     ZStack {
                         Color.black.opacity(0.45)
                         VStack(spacing: 10) {
                             ProgressView().tint(.white)
-                            Text("Finding your dishes…").font(.subheadline).foregroundStyle(.white)
+                            Text(working).font(.q(15, .bold)).foregroundStyle(.white)
                         }
                     }
                 }
@@ -209,33 +205,36 @@ struct AddMealView: View {
             .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
             .contentShape(Rectangle())
             .onTapGesture { if image == nil { showCamera = true } }
+            .plateCard(padding: 10)
     }
 
     private var details: some View {
         VStack(spacing: 0) {
             Button { showPlaces = true } label: {
                 HStack {
-                    Image(systemName: "mappin.and.ellipse").foregroundStyle(Theme.accent)
+                    Image(systemName: "mappin.and.ellipse").foregroundStyle(Theme.coral)
                     Text(place.isEmpty ? "Choose where you ate" : place)
-                        .foregroundStyle(place.isEmpty ? Color.secondary : Color.primary)
+                        .foregroundStyle(place.isEmpty ? Theme.brown2 : Theme.brown)
                         .lineLimit(1)
                     Spacer()
                     Text(place.isEmpty ? "" : (placeAuto ? "nearby · change" : "change"))
-                        .font(.caption).foregroundStyle(.secondary)
-                    Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
+                        .font(.caption).foregroundStyle(Theme.brown2)
+                    Image(systemName: "chevron.right").font(.caption).foregroundStyle(Theme.brown3)
                 }
+                .font(.system(size: 15, weight: .semibold, design: .rounded))
                 .padding(.vertical, 12)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            Divider()
+            Divider().overlay(Theme.line)
             HStack {
-                Image(systemName: type.symbol).foregroundStyle(Theme.accent)
+                Image(systemName: type.symbol).foregroundStyle(Theme.coral)
                 Picker("Meal", selection: $type) {
                     ForEach(MealType.allCases) { Text($0.title).tag($0) }
                 }
                 .labelsHidden()
                 .pickerStyle(.menu)
+                .tint(Theme.brown)
                 Spacer()
                 DatePicker("Time", selection: $date)
                     .labelsHidden()
@@ -243,41 +242,52 @@ struct AddMealView: View {
             .padding(.vertical, 6)
         }
         .padding(.horizontal, 14)
-        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Theme.card))
+        .creamCard(padding: 0)
+    }
+
+    private func errorCard(_ text: String) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(text).font(.system(size: 14, weight: .semibold, design: .rounded)).foregroundStyle(Color(hex: 0xC0392B))
+            HStack {
+                Button("Try again") { Task { await process() } }
+                    .buttonStyle(.bordered).tint(Theme.coral)
+                Button("Type it in instead") {
+                    draft = .blank(image: image, info: info, note: nil)
+                    showReview = true
+                }
+                .buttonStyle(.bordered).tint(Theme.coral)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .creamCard()
     }
 
     private var controls: some View {
-        VStack(spacing: 6) {
-            HStack(spacing: 34) {
+        VStack(spacing: 8) {
+            HStack(spacing: 36) {
                 PhotosPicker(selection: $pickerItem, matching: .images) {
-                    circleIcon("photo.on.rectangle")
+                    DishIconPlate(icon: "photo")
                 }
                 Button { showCamera = true } label: {
-                    ZStack {
-                        Circle().stroke(Theme.accent, lineWidth: 4).frame(width: 70, height: 70)
-                        Circle().fill(Theme.accent).frame(width: 56, height: 56)
-                    }
+                    Circle()
+                        .fill(Color(hex: 0xFFFAF6))
+                        .overlay(Circle().stroke(Color(hex: 0xF4E2D6), lineWidth: 3).padding(10))
+                        .overlay(Circle().fill(Theme.button).padding(17).shadow(color: Theme.coral.opacity(0.4), radius: 5, y: 3))
+                        .frame(width: 84, height: 84)
+                        .shadow(color: Color(hex: 0xC85037).opacity(0.38), radius: 11, y: 6)
                 }
                 .accessibilityLabel("Take photo")
                 Button {
                     draft = .blank(image: nil, info: info, note: "Type what you ate, then let the AI estimate the calories.")
                     showReview = true
                 } label: {
-                    circleIcon("square.and.pencil")
+                    DishIconPlate(icon: "pencil")
                 }
                 .accessibilityLabel("Type it in")
             }
-            Text("Library · Camera · Type it in").font(.caption).foregroundStyle(.secondary)
+            Text("Library · Camera · Type it in").font(.q(12.5, .bold)).foregroundStyle(Theme.brown2)
         }
-        .padding(.top, 4)
-    }
-
-    private func circleIcon(_ name: String) -> some View {
-        Image(systemName: name)
-            .font(.system(size: 20))
-            .foregroundStyle(.primary)
-            .frame(width: 48, height: 48)
-            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Theme.card))
+        .padding(.top, 6)
     }
 
     // MARK: Actions
@@ -300,7 +310,7 @@ struct AddMealView: View {
         } else if let c = loc.coordinate, place.isEmpty {
             Task { await loadNearby(lat: c.latitude, lon: c.longitude) }
         }
-        Task { await analyse() }
+        Task { await process() }
     }
 
     private func loadPicked() async {
@@ -328,25 +338,56 @@ struct AddMealView: View {
         }
     }
 
-    private func analyse() async {
+    private func process() async {
         guard let img = image else { return }
-        guard ClaudeClient.hasKey else {
-            draft = .blank(image: img, info: info,
-                           note: "Add your Claude API key in Settings so dishes are named and calories counted for you.")
-            showReview = true
+        errorText = nil
+        if mode == .label {
+            working = "Reading the label…"
+            let scan = await LabelReader.scan(img)
+            working = nil
+            label = LabelBox(scan: scan)
             return
         }
-        analysing = true
-        errorText = nil
+        working = FoodAI.mode == .claude ? "Asking Claude…" : "Finding your dishes…"
         do {
-            let found = try await ClaudeClient.analysePhoto(img, singleDish: singleDish)
-            analysing = false
+            let found = try await FoodAI.analyse(img, singleDish: mode == .single)
+            working = nil
             draft = .from(found, image: img, info: info)
             showReview = true
         } catch {
-            analysing = false
+            working = nil
             errorText = error.localizedDescription
         }
+    }
+
+    private func labelAdded(_ dish: Dish) {
+        var lifted: CIImage?
+        var preview: UIImage?
+        if let img = image, let cg = ImageStore.normalized(img, maxSide: 1024).cgImage, let l = ImageStore.liftAll(cg) {
+            lifted = l
+            preview = ImageStore.uiImage(l)
+        }
+        var d = ReviewDraft.blank(image: image, info: info, note: nil)
+        d.dishes = [DraftDish(dish: dish, lifted: lifted, preview: preview)]
+        draft = d
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { showReview = true }
+    }
+}
+
+struct LabelBox: Identifiable {
+    let id = UUID()
+    let scan: LabelScan
+}
+
+struct DishIconPlate: View {
+    let icon: String
+    var body: some View {
+        Circle()
+            .fill(Color(hex: 0xFFFAF6))
+            .overlay(Circle().stroke(Color(hex: 0xF3E4D9), lineWidth: 2).padding(9))
+            .overlay(Image(systemName: icon).font(.system(size: 19, weight: .semibold)).foregroundStyle(Theme.brown2))
+            .frame(width: 54, height: 54)
+            .shadow(color: Color(hex: 0x964632).opacity(0.18), radius: 4, y: 2)
     }
 }
 
@@ -356,6 +397,7 @@ struct ReviewView: View {
     let draft: ReviewDraft
     var onSaved: () -> Void
 
+    @Environment(\.dismiss) private var dismiss
     @State private var dishes: [DraftDish]
     @State private var cost: Double = 0
     @State private var editing: DraftDish?
@@ -371,54 +413,62 @@ struct ReviewView: View {
     private var mine: [DraftDish] { dishes.filter { $0.mine } }
     private var mineKcal: Double { mine.reduce(0) { $0 + $1.dish.kcal } }
 
+    private var subtitle: String {
+        if !draft.fromAI { return draft.image == nil ? "Type what you ate." : "Check the details, then save." }
+        return "\(FoodAI.modeTitle) found \(dishes.count) \(dishes.count == 1 ? "item" : "items"). Only ticked ones are saved."
+    }
+
     var body: some View {
-        List {
-            Section {
-                ForEach(dishes) { d in
-                    HStack(spacing: 12) {
-                        DishThumb(dish: nil, meal: nil, size: 48, preview: d.preview)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(d.dish.name.isEmpty ? "Tap to name this dish" : d.dish.name)
-                                .foregroundStyle(d.dish.name.isEmpty ? Color.secondary : Color.primary)
-                            Text(d.mine ? Fmt.kcal(d.dish.kcal) : "not mine")
-                                .font(.caption).foregroundStyle(.secondary)
+        ZStack {
+            PageBackground()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    RoundNavButton(icon: "chevron.left") { dismiss() }
+                        .padding(.top, 4)
+                    Text(draft.image == nil && !draft.fromAI ? "What did you eat?" : "Which ones are yours?")
+                        .font(.q(28, .bold)).foregroundStyle(.white).padding(.top, 10)
+                    Text(subtitle).font(.system(size: 14, weight: .semibold, design: .rounded)).foregroundStyle(.white.opacity(0.92))
+
+                    VStack(spacing: 0) {
+                        ForEach(dishes) { d in
+                            row(d)
+                            Divider().overlay(Theme.line).padding(.leading, 76)
                         }
-                        Spacer()
-                        Button { toggle(d.id) } label: {
-                            Image(systemName: d.mine ? "checkmark.circle.fill" : "circle")
-                                .font(.title2)
-                                .foregroundStyle(d.mine ? Theme.accent : Color.secondary)
+                        Button {
+                            let n = DraftDish(dish: Dish())
+                            dishes.append(n)
+                            editing = n
+                        } label: {
+                            Label("Add a dish", systemImage: "plus")
+                                .font(.q(15, .bold)).foregroundStyle(Theme.coral)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(14)
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel(d.mine ? "Mine" : "Not mine")
                     }
-                    .opacity(d.mine ? 1 : 0.55)
-                    .contentShape(Rectangle())
-                    .onTapGesture { editing = d }
-                }
-                Button {
-                    let n = DraftDish(dish: Dish())
-                    dishes.append(n)
-                    editing = n
-                } label: {
-                    Label("Add a dish", systemImage: "plus")
-                }
-            } header: {
-                Text(draft.image == nil ? "What did you eat?" : "AI found \(dishes.count) \(dishes.count == 1 ? "item" : "items"). Only ticked ones are saved.")
-            } footer: {
-                if let note = draft.note { Text(note) }
-            }
+                    .creamCard(padding: 0)
+                    .padding(.top, 16)
 
-            Section {
-                NumberField(label: "What I paid", value: $cost, decimals: 2, prefix: "RM")
-            } header: {
-                Text("My cost")
-            } footer: {
-                Text("Only what you spent on your own food.")
+                    if let note = draft.note {
+                        Text(note).font(.system(size: 12.5, weight: .semibold, design: .rounded)).foregroundStyle(Theme.brown2)
+                            .padding(.horizontal, 6).padding(.top, 8)
+                    }
+
+                    Text("MY COST").font(.q(12.5, .bold)).tracking(0.8).foregroundStyle(Theme.brown2)
+                        .padding(.horizontal, 6).padding(.top, 18).padding(.bottom, 7)
+                    NumberField(label: "What I paid", value: $cost, decimals: 2, prefix: "RM")
+                        .font(.system(size: 15, weight: .semibold, design: .rounded))
+                        .foregroundStyle(Theme.brown)
+                        .creamCard()
+                    Text("Only what you spent on your own food.")
+                        .font(.system(size: 12, weight: .semibold, design: .rounded)).foregroundStyle(Theme.brown2)
+                        .padding(.horizontal, 6).padding(.top, 7)
+                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 110)
             }
         }
-        .navigationTitle("Which ones are yours?")
-        .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.hidden, for: .navigationBar)
         .safeAreaInset(edge: .bottom) {
             Button {
                 Task { await save() }
@@ -431,9 +481,8 @@ struct ReviewView: View {
             .buttonStyle(AccentButtonStyle())
             .disabled(saving || mine.isEmpty)
             .opacity(mine.isEmpty ? 0.5 : 1)
-            .padding(.horizontal)
+            .padding(.horizontal, 20)
             .padding(.vertical, 8)
-            .background(.bar)
         }
         .sheet(item: $editing) { d in
             DishEditor(dish: d.dish, onSave: { new in
@@ -448,6 +497,37 @@ struct ReviewView: View {
                 editing = dishes[0]
             }
         }
+    }
+
+    private func row(_ d: DraftDish) -> some View {
+        HStack(spacing: 12) {
+            DishThumb(dish: nil, meal: nil, size: 50, preview: d.preview)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(d.dish.name.isEmpty ? "Tap to name this dish" : d.dish.name)
+                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                    .foregroundStyle(d.dish.name.isEmpty ? Theme.brown2 : Theme.brown)
+                Text(d.mine ? Fmt.kcal(d.dish.kcal) : "not mine")
+                    .font(.system(size: 12.5, weight: .semibold, design: .rounded)).foregroundStyle(Theme.brown2)
+            }
+            Spacer()
+            Button { toggle(d.id) } label: {
+                if d.mine {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 14, weight: .bold)).foregroundStyle(.white)
+                        .frame(width: 30, height: 30)
+                        .background(Circle().fill(Theme.button).shadow(color: Theme.coral.opacity(0.35), radius: 4, y: 2))
+                } else {
+                    Circle().stroke(Color(hex: 0xE8D3C6), lineWidth: 2).frame(width: 28, height: 28)
+                }
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(d.mine ? "Mine" : "Not mine")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .opacity(d.mine ? 1 : 0.5)
+        .contentShape(Rectangle())
+        .onTapGesture { editing = d }
     }
 
     private func toggle(_ id: UUID) {
@@ -475,7 +555,11 @@ struct ReviewView: View {
             m.dishes = chosen.map { d in
                 var dish = d.dish
                 if dish.name.trimmingCharacters(in: .whitespaces).isEmpty { dish.name = "Food" }
-                if let img { dish.cutout = ImageStore.makeCutout(from: img, box: d.box) }
+                if let lifted = d.lifted {
+                    dish.cutout = ImageStore.saveLifted(lifted)
+                } else if let img, d.box != nil || chosen.count == 1 {
+                    dish.cutout = ImageStore.makeCutout(from: img, box: d.box)
+                }
                 return dish
             }
             return m

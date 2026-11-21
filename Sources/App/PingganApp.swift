@@ -7,14 +7,17 @@ struct PingganApp: App {
             Keys.photoSide: 1280,
             Keys.shrinkMonths: 6,
             Keys.shrinkSide: 800,
-            Keys.aiModel: ClaudeClient.defaultModel
+            Keys.aiModel: ClaudeClient.defaultModel,
+            Keys.aiMode: AIMode.onDevice.rawValue
         ])
     }
 
     var body: some Scene {
         WindowGroup {
             RootView()
-                .tint(Theme.accent)
+                .tint(Theme.coral)
+                .fontDesign(.rounded)
+                .preferredColorScheme(.light)
         }
     }
 }
@@ -43,6 +46,7 @@ struct RootView: View {
         }
         .fullScreenCover(item: $add) { req in
             AddMealView(request: req)
+                .fontDesign(.rounded)
         }
         .onChange(of: phase) {
             switch phase {
@@ -63,37 +67,42 @@ struct TabBar: View {
     var onCamera: () -> Void
 
     var body: some View {
-        HStack(alignment: .bottom, spacing: 0) {
+        HStack(alignment: .center, spacing: 0) {
             item(.today, "sun.max", "Today")
             item(.calendar, "calendar", "Calendar")
             Button(action: onCamera) {
-                Image(systemName: "camera.fill")
-                    .font(.system(size: 22, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: 58, height: 58)
-                    .background(Circle().fill(Theme.accent))
-                    .shadow(color: Theme.accent.opacity(0.35), radius: 6, y: 3)
+                Circle()
+                    .fill(Color(hex: 0xFFF9F4))
+                    .overlay(Circle().stroke(Color(hex: 0xF4E2D6), lineWidth: 2.5).padding(9))
+                    .overlay(Image(systemName: "camera").font(.system(size: 24, weight: .semibold)).foregroundStyle(Theme.coral))
+                    .frame(width: 66, height: 66)
+                    .shadow(color: Color(hex: 0xC85037).opacity(0.38), radius: 11, y: 6)
             }
-            .offset(y: -8)
-            .frame(maxWidth: .infinity)
+            .buttonStyle(.plain)
+            .offset(y: -22)
+            .padding(.horizontal, 6)
             .accessibilityLabel("Add a meal")
             item(.stats, "chart.pie", "Stats")
             item(.settings, "gearshape", "Settings")
         }
-        .padding(.top, 6)
-        .background(.bar)
-        .overlay(alignment: .top) { Divider() }
+        .frame(height: 68)
+        .background(
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .fill(Color(hex: 0xFFF8F3).opacity(0.96))
+                .shadow(color: Color(hex: 0xA04632).opacity(0.22), radius: 15, y: 8)
+        )
+        .padding(.horizontal, 12)
+        .padding(.bottom, 2)
     }
 
     private func item(_ t: AppTab, _ icon: String, _ label: String) -> some View {
         Button { tab = t } label: {
-            VStack(spacing: 3) {
-                Image(systemName: icon).font(.system(size: 20))
-                Text(label).font(.system(size: 10, weight: .medium))
+            VStack(spacing: 2) {
+                Image(systemName: icon).font(.system(size: 21, weight: .medium))
+                Text(label).font(.system(size: 10.5, weight: .bold, design: .rounded))
             }
-            .foregroundStyle(tab == t ? Theme.accentText : Color.secondary)
+            .foregroundStyle(tab == t ? Theme.coral : Theme.brown3)
             .frame(maxWidth: .infinity)
-            .padding(.bottom, 4)
         }
         .buttonStyle(.plain)
     }
@@ -122,53 +131,73 @@ struct TodayView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                header
+        ZStack {
+            PageBackground()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    PageHeader(title: title, subtitle: Fmt.dayLong.string(from: day)) {
+                        HStack(spacing: 6) {
+                            if !isToday {
+                                Button("Today") { day = Date() }
+                                    .font(.q(14, .bold)).foregroundStyle(.white)
+                                    .padding(.horizontal, 10).frame(height: 36)
+                                    .background(Capsule().fill(.white.opacity(0.28)))
+                            }
+                            RoundNavButton(icon: "chevron.left") { shift(-1) }
+                            RoundNavButton(icon: "chevron.right") { shift(1) }
+                                .opacity(isToday ? 0.45 : 1)
+                                .disabled(isToday)
+                        }
+                    }
 
-                if let problem = store.problem {
-                    Text(problem).font(.footnote).foregroundStyle(.red)
-                        .padding(12)
-                        .background(RoundedRectangle(cornerRadius: 12).fill(Color.red.opacity(0.08)))
-                }
+                    if let problem = store.problem {
+                        Text(problem).font(.footnote).foregroundStyle(Color(hex: 0xC0392B))
+                            .creamCard()
+                    }
 
-                HStack(spacing: 10) {
-                    StatCard(title: "Calories", value: Fmt.kcal(meals.reduce(0) { $0 + $1.kcal }),
-                             bg: Theme.kcalBG, label: Theme.kcalLabel, fg: Theme.kcalFG)
-                    StatCard(title: "Spent on me", value: Fmt.rm(meals.reduce(0) { $0 + $1.cost }),
-                             bg: Theme.costBG, label: Theme.costLabel, fg: Theme.costFG)
-                }
-
-                if meals.isEmpty {
-                    VStack(spacing: 8) {
-                        Image(systemName: "fork.knife.circle").font(.system(size: 40)).foregroundStyle(Theme.accent)
-                        Text(isToday ? "Nothing logged yet today" : "Nothing logged this day").font(.headline)
-                        Text("Tap the camera button to snap your food.").font(.subheadline).foregroundStyle(.secondary)
+                    VStack(spacing: 12) {
+                        Text(isToday ? "EATEN TODAY" : "EATEN THIS DAY")
+                            .font(.q(12, .bold)).tracking(1).foregroundStyle(Theme.brown2)
+                        FlipCounter(value: meals.reduce(0) { $0 + $1.kcal })
+                        HStack(spacing: 8) {
+                            Chip(text: "\(Fmt.rm(meals.reduce(0) { $0 + $1.cost })) on me", icon: "wallet.bifold")
+                            Chip(text: "\(meals.count) \(meals.count == 1 ? "meal" : "meals")", icon: "fork.knife")
+                        }
                     }
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 24)
-                }
+                    .plateCard(padding: 18)
 
-                ForEach(meals) { m in
-                    NavigationLink(value: m.id) { MealRow(meal: m) }
-                        .buttonStyle(.plain)
-                }
-
-                Button {
-                    onAdd(AddRequest(type: nextMissing, day: day))
-                } label: {
-                    Label("Add \(nextMissing.title.lowercased())", systemImage: "plus")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                    if meals.isEmpty {
+                        VStack(spacing: 6) {
+                            Text(isToday ? "Nothing on the plate yet" : "Nothing logged this day").font(.q(17, .bold)).foregroundStyle(Theme.brown)
+                            Text("Tap the camera to snap your food.").font(.subheadline).foregroundStyle(Theme.brown2)
+                        }
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
-                        .background(RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [5, 4]))
-                            .foregroundStyle(Color.secondary.opacity(0.5)))
+                        .padding(.vertical, 12)
+                    }
+
+                    ForEach(meals) { m in
+                        NavigationLink(value: m.id) { MealRow(meal: m) }
+                            .buttonStyle(.plain)
+                    }
+
+                    Button {
+                        onAdd(AddRequest(type: nextMissing, day: day))
+                    } label: {
+                        Label("Add \(nextMissing.title.lowercased())", systemImage: "plus")
+                            .font(.q(14.5, .bold))
+                            .foregroundStyle(Theme.brown2)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                            .background(RoundedRectangle(cornerRadius: 22, style: .continuous)
+                                .strokeBorder(style: StrokeStyle(lineWidth: 2, dash: [6, 5]))
+                                .foregroundStyle(Color(hex: 0xC8785F).opacity(0.45)))
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
+                .padding(.horizontal, 20)
+                .padding(.bottom, 24)
             }
-            .padding()
         }
         .toolbar(.hidden, for: .navigationBar)
         .navigationDestination(for: UUID.self) { MealDetailView(mealID: $0) }
@@ -178,23 +207,6 @@ struct TodayView: View {
                 if v.translation.width < -60 { shift(1) } else if v.translation.width > 60 { shift(-1) }
             }
         )
-    }
-
-    private var header: some View {
-        HStack(alignment: .center, spacing: 14) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.system(size: 30, weight: .bold, design: .rounded))
-                Text(Fmt.dayLong.string(from: day)).font(.subheadline).foregroundStyle(.secondary)
-            }
-            Spacer()
-            if !isToday {
-                Button("Today") { day = Date() }.font(.subheadline.weight(.medium))
-            }
-            Button { shift(-1) } label: { Image(systemName: "chevron.left").font(.title3) }
-            Button { shift(1) } label: { Image(systemName: "chevron.right").font(.title3) }
-                .disabled(isToday)
-        }
-        .padding(.top, 8)
     }
 
     private func shift(_ n: Int) {

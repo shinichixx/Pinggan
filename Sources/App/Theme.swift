@@ -14,25 +14,57 @@ extension Color {
     init(hex: UInt32) {
         self.init(UIColor(hex: hex))
     }
-
-    /// A colour that switches between a light-mode and a dark-mode value.
-    static func dyn(_ light: UInt32, _ dark: UInt32) -> Color {
-        Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(hex: dark) : UIColor(hex: light) })
-    }
 }
 
+/// Colours taken from the app icon: coral → peach → butter, cream plates and warm brown text.
 enum Theme {
-    static let accent = Color(hex: 0xD85A30)
-    static let accentText = Color.dyn(0x993C1D, 0xF0997B)
-    static let kcalBG = Color.dyn(0xFAECE7, 0x4A1B0C)
-    static let kcalFG = Color.dyn(0x712B13, 0xF5C4B3)
-    static let kcalLabel = Color.dyn(0x993C1D, 0xF0997B)
-    static let costBG = Color.dyn(0xFAEEDA, 0x412402)
-    static let costFG = Color.dyn(0x633806, 0xFAC775)
-    static let costLabel = Color.dyn(0x854F0B, 0xEF9F27)
-    static let tile = Color.dyn(0xF1EFE8, 0x2C2C2A)
-    static let card = Color(.secondarySystemBackground)
+    static let coral = Color(hex: 0xF7655A)
+    static let coral2 = Color(hex: 0xFB8A6E)
+    static let peach = Color(hex: 0xFDB487)
+    static let butter = Color(hex: 0xFFD995)
+    static let cream = Color(hex: 0xFFF7F1)
+    static let cream2 = Color(hex: 0xFBEDE3)
+    static let rim = Color(hex: 0xF2DCCD)
+    static let chip = Color(hex: 0xFFE7DA)
+    static let brown = Color(hex: 0x6A3D2C)
+    static let brown2 = Color(hex: 0x9A6A55)
+    static let brown3 = Color(hex: 0xC19A86)
+    static let line = Color(hex: 0xF0DDD0)
+    static let star = Color(hex: 0xF5A524)
     static let photoBG = Color(hex: 0x4A1B0C)
+
+    static let accent = coral
+    static let accentText = coral
+    static let tile = cream2
+    static let card = cream
+
+    static let page = LinearGradient(
+        stops: [
+            .init(color: Color(hex: 0xF96B63), location: 0),
+            .init(color: Color(hex: 0xFB8D77), location: 0.14),
+            .init(color: Color(hex: 0xFDB98C), location: 0.28),
+            .init(color: Color(hex: 0xFFE2CE), location: 0.44),
+            .init(color: Color(hex: 0xFFF2E9), location: 0.6),
+            .init(color: Color(hex: 0xFFF6EF), location: 1)
+        ],
+        startPoint: UnitPoint(x: 0.2, y: 0), endPoint: UnitPoint(x: 0.6, y: 1))
+
+    static let button = LinearGradient(colors: [Color(hex: 0xF7655A), Color(hex: 0xFB8D6F), Color(hex: 0xFDA77E)],
+                                       startPoint: .leading, endPoint: .trailing)
+
+    static let plateFill = RadialGradient(colors: [Color(hex: 0xFFFDFB), Color(hex: 0xFFF8F2), Color(hex: 0xFBEDE3)],
+                                          center: UnitPoint(x: 0.5, y: 0.4), startRadius: 0, endRadius: 360)
+}
+
+enum QWeight: String {
+    case medium = "Medium", semibold = "SemiBold", bold = "Bold"
+}
+
+extension Font {
+    /// Quicksand, the rounded font of the "Pinggan" lettering on the icon.
+    static func q(_ size: CGFloat, _ weight: QWeight = .bold) -> Font {
+        .custom("Quicksand-\(weight.rawValue)", size: size)
+    }
 }
 
 enum Keys {
@@ -40,6 +72,7 @@ enum Keys {
     static let shrinkMonths = "shrinkMonths"
     static let shrinkSide = "shrinkSide"
     static let aiModel = "aiModel"
+    static let aiMode = "aiMode"
     static let backupBookmark = "backupBookmark"
     static let backupFolderName = "backupFolderName"
     static let lastBackup = "lastBackup"
@@ -114,28 +147,209 @@ enum CalendarMath {
     static let weekdayLetters = ["M", "T", "W", "T", "F", "S", "S"]
 }
 
+// MARK: - Building blocks
+
+/// The gradient page background with faint leaf and cutlery shapes, like the icon.
+struct PageBackground: View {
+    var body: some View {
+        ZStack {
+            Theme.page
+            GeometryReader { geo in
+                Image(systemName: "leaf")
+                    .font(.system(size: 150, weight: .light))
+                    .rotationEffect(.degrees(-22))
+                    .position(x: 30, y: 120)
+                Image(systemName: "fork.knife")
+                    .font(.system(size: 110, weight: .light))
+                    .rotationEffect(.degrees(16))
+                    .position(x: geo.size.width - 20, y: 190)
+            }
+            .foregroundStyle(.white.opacity(0.16))
+        }
+        .ignoresSafeArea()
+    }
+}
+
+struct PlateCard: ViewModifier {
+    var padding: CGFloat = 16
+    func body(content: Content) -> some View {
+        content
+            .padding(padding)
+            .background(
+                RoundedRectangle(cornerRadius: 26, style: .continuous)
+                    .fill(Theme.plateFill)
+                    .shadow(color: Color(hex: 0xAA4632).opacity(0.22), radius: 14, y: 10)
+            )
+    }
+}
+
+struct CreamCard: ViewModifier {
+    var padding: CGFloat = 14
+    func body(content: Content) -> some View {
+        content
+            .padding(padding)
+            .background(
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .fill(Theme.cream)
+                    .shadow(color: Color(hex: 0xAA5037).opacity(0.13), radius: 10, y: 6)
+            )
+    }
+}
+
+extension View {
+    func plateCard(padding: CGFloat = 16) -> some View { modifier(PlateCard(padding: padding)) }
+    func creamCard(padding: CGFloat = 14) -> some View { modifier(CreamCard(padding: padding)) }
+
+    /// Lists and forms on the gradient, with cream rows.
+    func creamList() -> some View {
+        self.scrollContentBackground(.hidden)
+            .background(PageBackground())
+            .foregroundStyle(Theme.brown)
+    }
+}
+
+/// Calories shown on flip-counter tiles, like the "1,850 kcal" badge on the icon.
+struct FlipCounter: View {
+    let value: Double
+    var size: CGFloat = 34
+    var unit: String = "kcal"
+    var showFire = true
+
+    var body: some View {
+        let text = Fmt.num(value)
+        HStack(spacing: size * 0.09) {
+            ForEach(Array(text.enumerated()), id: \.offset) { _, ch in
+                if ch.isNumber {
+                    Text(String(ch))
+                        .font(.q(size, .bold))
+                        .foregroundStyle(Theme.brown)
+                        .frame(width: size * 0.88, height: size * 1.35)
+                        .background(
+                            RoundedRectangle(cornerRadius: size * 0.24, style: .continuous)
+                                .fill(LinearGradient(stops: [.init(color: .white, location: 0), .init(color: .white, location: 0.49),
+                                                             .init(color: Color(hex: 0xF6EBE3), location: 0.51), .init(color: Color(hex: 0xF6EBE3), location: 1)],
+                                                     startPoint: .top, endPoint: .bottom))
+                                .shadow(color: Color(hex: 0x783C28).opacity(0.18), radius: 2, y: 1.5)
+                        )
+                        .overlay(Rectangle().fill(Color(hex: 0x966450).opacity(0.2)).frame(height: 1))
+                } else {
+                    Text(String(ch)).font(.q(size * 0.9, .bold)).foregroundStyle(Theme.brown)
+                }
+            }
+            if !unit.isEmpty {
+                VStack(spacing: 2) {
+                    if showFire { Text("🔥").font(.system(size: size * 0.5)) }
+                    Text(unit).font(.q(size * 0.45, .bold)).foregroundStyle(Theme.brown2)
+                }
+                .padding(.leading, size * 0.12)
+            }
+        }
+    }
+}
+
+/// Pill-shaped tag on a cream card.
+struct Chip: View {
+    let text: String
+    var icon: String? = nil
+
+    var body: some View {
+        HStack(spacing: 5) {
+            if let icon { Image(systemName: icon).font(.system(size: 12, weight: .semibold)) }
+            Text(text).font(.system(size: 13, weight: .bold, design: .rounded))
+        }
+        .foregroundStyle(Theme.brown)
+        .padding(.horizontal, 11)
+        .padding(.vertical, 5)
+        .background(Capsule().fill(Theme.chip))
+    }
+}
+
+/// White title + subtitle at the top of a page, with optional buttons on the right.
+struct PageHeader<Trailing: View>: View {
+    let title: String
+    let subtitle: String
+    @ViewBuilder var trailing: Trailing
+
+    var body: some View {
+        HStack(alignment: .bottom) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.q(34, .bold)).foregroundStyle(.white)
+                Text(subtitle).font(.system(size: 14, weight: .semibold, design: .rounded)).foregroundStyle(.white.opacity(0.92))
+            }
+            Spacer()
+            trailing
+        }
+        .padding(.top, 8)
+    }
+}
+
+struct RoundNavButton: View {
+    let icon: String
+    var action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 16, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 36, height: 36)
+                .background(Circle().fill(.white.opacity(0.28)))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// Segmented control drawn as a cream pill on the gradient.
+struct PillPicker<T: Hashable>: View {
+    let options: [(T, String)]
+    @Binding var selection: T
+    var light = false
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(Array(options.enumerated()), id: \.offset) { _, opt in
+                let on = opt.0 == selection
+                Button {
+                    withAnimation(.snappy(duration: 0.2)) { selection = opt.0 }
+                } label: {
+                    Text(opt.1)
+                        .font(.q(13.5, .bold))
+                        .lineLimit(1)
+                        .foregroundStyle(on ? Theme.coral : (light ? Theme.brown2 : .white))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .background(Capsule().fill(on ? Theme.cream : .clear).shadow(color: .black.opacity(on ? 0.08 : 0), radius: 3, y: 1))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(4)
+        .background(Capsule().fill(light ? Theme.cream2 : .white.opacity(0.35)))
+    }
+}
+
 struct AccentButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.headline)
+            .font(.q(16.5, .bold))
             .foregroundStyle(.white)
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 14)
-            .background(RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Theme.accent.opacity(configuration.isPressed ? 0.8 : 1)))
+            .frame(height: 52)
+            .background(Capsule().fill(Theme.button).shadow(color: Theme.coral.opacity(0.35), radius: 9, y: 5))
+            .opacity(configuration.isPressed ? 0.85 : 1)
+            .scaleEffect(configuration.isPressed ? 0.98 : 1)
     }
 }
 
 struct OutlineButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.headline)
-            .foregroundStyle(Theme.accentText)
+            .font(.q(16.5, .bold))
+            .foregroundStyle(Theme.coral)
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 14)
-            .background(RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(Theme.accent.opacity(0.5), lineWidth: 1))
-            .opacity(configuration.isPressed ? 0.7 : 1)
+            .frame(height: 52)
+            .background(Capsule().fill(Theme.cream).shadow(color: Color(hex: 0xAA5037).opacity(0.13), radius: 6, y: 3))
+            .opacity(configuration.isPressed ? 0.8 : 1)
     }
 }
 
@@ -149,7 +363,7 @@ struct StatCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title).font(.caption).foregroundStyle(label)
-            Text(value).font(.system(size: 21, weight: .bold, design: .rounded)).foregroundStyle(fg)
+            Text(value).font(.q(21, .bold)).foregroundStyle(fg)
                 .lineLimit(1).minimumScaleFactor(0.7)
         }
         .frame(maxWidth: .infinity, alignment: .leading)

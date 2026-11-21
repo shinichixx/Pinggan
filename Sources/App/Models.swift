@@ -2,7 +2,7 @@ import Foundation
 import SwiftUI
 import UIKit
 
-enum MealType: String, Codable, CaseIterable, Identifiable {
+enum MealType: String, Codable, CaseIterable, Identifiable, Sendable {
     case breakfast, lunch, snack, dinner
 
     var id: String { rawValue }
@@ -40,7 +40,7 @@ enum MealType: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-struct Dish: Identifiable, Hashable, Codable {
+struct Dish: Identifiable, Hashable, Codable, Sendable {
     var id: UUID
     var name: String
     var kcal: Double
@@ -77,7 +77,7 @@ struct Dish: Identifiable, Hashable, Codable {
     }
 }
 
-struct Meal: Identifiable, Hashable, Codable {
+struct Meal: Identifiable, Hashable, Codable, Sendable {
     var id: UUID
     var date: Date
     var type: MealType
@@ -147,6 +147,8 @@ enum Paths {
     static var images: URL { dir(root.appendingPathComponent("Images", isDirectory: true)) }
     static var data: URL { root.appendingPathComponent("meals.json") }
     static var previous: URL { root.appendingPathComponent("meals.previous.json") }
+    /// Saved products (from labels / barcodes) and dishes you corrected.
+    static var pantry: URL { root.appendingPathComponent("pantry.json") }
 
     private static func dir(_ u: URL) -> URL {
         try? FileManager.default.createDirectory(at: u, withIntermediateDirectories: true)

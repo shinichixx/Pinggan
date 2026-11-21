@@ -147,9 +147,9 @@ enum Usage {
 
     /// US$ per million tokens (input, output). Estimates only.
     static func prices(_ model: String) -> (Double, Double) {
-        if model.contains("haiku") { return (1, 5) }
-        if model.contains("opus") { return (5, 25) }
-        return (3, 15)
+        if model.contains("haiku") { return (0.1, 0.5) }
+        if model.contains("opus") { return (4, 20) }
+        return (2, 10)
     }
 
     static func record(input: Int, output: Int, model: String, photo: Bool) {

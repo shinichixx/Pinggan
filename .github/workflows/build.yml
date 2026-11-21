@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-15
+    runs-on: xcode-27
     steps:
       - uses: actions/checkout@v4
 
@@ -20,6 +20,9 @@ jobs:
           BUILD=$(grep -m1 'CURRENT_PROJECT_VERSION' project.yml | sed -E 's/[^0-9]//g')
           echo "build=$BUILD" >> "$GITHUB_OUTPUT"
           echo "Build $BUILD"
+
+      - name: Show Xcode
+        run: xcodebuild -version
 
       - name: Install XcodeGen
         run: brew install xcodegen

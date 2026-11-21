@@ -71,79 +71,95 @@ struct StatsView: View {
 
     var body: some View {
         let s = MonthStats(meals: store.meals(inMonthOf: month))
-        ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Stats").font(.system(size: 30, weight: .bold, design: .rounded))
-                        Text(Fmt.monthYear.string(from: month)).font(.subheadline).foregroundStyle(.secondary)
+        ZStack {
+            PageBackground()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    PageHeader(title: "Stats", subtitle: Fmt.monthYear.string(from: month)) {
+                        HStack(spacing: 6) {
+                            RoundNavButton(icon: "chevron.left") { month = CalendarMath.addMonths(-1, to: month) }
+                            RoundNavButton(icon: "chevron.right") { month = CalendarMath.addMonths(1, to: month) }
+                                .opacity(month >= CalendarMath.monthStart(Date()) ? 0.45 : 1)
+                                .disabled(month >= CalendarMath.monthStart(Date()))
+                        }
                     }
-                    Spacer()
-                    Button { month = CalendarMath.addMonths(-1, to: month) } label: { Image(systemName: "chevron.left").font(.title3) }
-                    Button { month = CalendarMath.addMonths(1, to: month) } label: { Image(systemName: "chevron.right").font(.title3) }
-                        .disabled(month >= CalendarMath.monthStart(Date()))
-                }
-                .padding(.top, 8)
 
-                HStack(spacing: 10) {
-                    StatCard(title: "Average per day", value: Fmt.kcal(s.avgKcal),
-                             bg: Theme.kcalBG, label: Theme.kcalLabel, fg: Theme.kcalFG)
-                    StatCard(title: "Spent this month", value: Fmt.rm(s.spent),
-                             bg: Theme.costBG, label: Theme.costLabel, fg: Theme.costFG)
-                }
-
-                Picker("Chart", selection: $metric) {
-                    Text("Calories").tag(0)
-                    Text("Spend").tag(1)
-                }
-                .pickerStyle(.segmented)
-
-                Chart(s.days) { d in
-                    BarMark(x: .value("Day", d.day, unit: .day),
-                            y: .value("Amount", metric == 0 ? d.kcal : d.cost))
-                        .foregroundStyle(Theme.accent)
-                        .cornerRadius(3)
-                }
-                .chartXScale(domain: CalendarMath.monthStart(month)...CalendarMath.monthEnd(month))
-                .frame(height: 170)
-                .overlay {
-                    if s.days.isEmpty {
-                        Text("Nothing logged this month.").font(.subheadline).foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 14) {
+                        HStack(alignment: .top) {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("AVERAGE PER DAY").font(.q(11.5, .bold)).tracking(1).foregroundStyle(Theme.brown2)
+                                FlipCounter(value: s.avgKcal, size: 24)
+                            }
+                            Spacer()
+                            VStack(alignment: .trailing, spacing: 8) {
+                                Text("SPENT ON ME").font(.q(11.5, .bold)).tracking(1).foregroundStyle(Theme.brown2)
+                                Text(Fmt.rm(s.spent)).font(.q(24, .bold)).foregroundStyle(Theme.brown)
+                                    .lineLimit(1).minimumScaleFactor(0.7)
+                            }
+                        }
+                        PillPicker(options: [(0, "Calories"), (1, "Spend")], selection: $metric, light: true)
+                        Chart(s.days) { d in
+                            BarMark(x: .value("Day", d.day, unit: .day),
+                                    y: .value("Amount", metric == 0 ? d.kcal : d.cost))
+                                .foregroundStyle(LinearGradient(colors: [Theme.coral2, Theme.coral], startPoint: .top, endPoint: .bottom))
+                                .cornerRadius(4)
+                        }
+                        .chartXScale(domain: CalendarMath.monthStart(month)...CalendarMath.monthEnd(month))
+                        .chartXAxis {
+                            AxisMarks(values: .stride(by: .day, count: 7)) { _ in
+                                AxisValueLabel(format: .dateTime.day()).foregroundStyle(Theme.brown3)
+                            }
+                        }
+                        .chartYAxis {
+                            AxisMarks { _ in
+                                AxisGridLine().foregroundStyle(Theme.line)
+                                AxisValueLabel().foregroundStyle(Theme.brown3)
+                            }
+                        }
+                        .frame(height: 150)
+                        .overlay {
+                            if s.days.isEmpty {
+                                Text("Nothing logged this month.").font(.q(14, .bold)).foregroundStyle(Theme.brown2)
+                            }
+                        }
                     }
-                }
+                    .plateCard()
 
-                VStack(spacing: 0) {
-                    row("Days logged", "\(s.daysLogged)")
-                    row("Meals", "\(s.mealCount) · \(s.dishCount) dishes")
-                    row("Average spend per day", Fmt.rm(s.avgSpend))
-                    if let t = s.topSpot { row("Top spot", "\(t.name) · \(t.visits)× · \(Fmt.rm(t.spent))") }
-                    if let e = s.mostEaten { row("Most eaten", "\(e.name) × \(e.count)") }
-                    if let p = s.priciest { row("Priciest meal", "\(Fmt.rm(p.cost))\(p.place.isEmpty ? "" : " · " + p.place)", last: true) }
-                }
-                .padding(.horizontal, 14)
-                .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Theme.card))
+                    VStack(spacing: 0) {
+                        row("Days logged", "\(s.daysLogged)")
+                        row("Meals", "\(s.mealCount) · \(s.dishCount) dishes")
+                        row("Average spend per day", Fmt.rm(s.avgSpend))
+                        if let t = s.topSpot { row("Top spot", "\(t.name) · \(t.visits)×") }
+                        if let e = s.mostEaten { row("Most eaten", "\(e.name) × \(e.count)") }
+                        if let p = s.priciest { row("Priciest meal", "\(Fmt.rm(p.cost))\(p.place.isEmpty ? "" : " · " + p.place)") }
+                    }
+                    .creamCard(padding: 0)
 
-                NavigationLink {
-                    RecapView(month: month)
-                } label: {
-                    Label("Monthly recap", systemImage: "square.grid.3x3.fill")
+                    NavigationLink {
+                        RecapView(month: month)
+                    } label: {
+                        Label("Monthly recap", systemImage: "square.grid.3x3.fill")
+                    }
+                    .buttonStyle(AccentButtonStyle())
                 }
-                .buttonStyle(AccentButtonStyle())
+                .padding(.horizontal, 20)
+                .padding(.bottom, 24)
             }
-            .padding()
         }
         .toolbar(.hidden, for: .navigationBar)
     }
 
-    private func row(_ title: String, _ value: String, last: Bool = false) -> some View {
+    private func row(_ title: String, _ value: String) -> some View {
         VStack(spacing: 0) {
             HStack(alignment: .firstTextBaseline) {
-                Text(title).font(.subheadline)
+                Text(title).foregroundStyle(Theme.brown)
                 Spacer(minLength: 12)
-                Text(value).font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.trailing)
+                Text(value).foregroundStyle(Theme.brown2).multilineTextAlignment(.trailing)
             }
-            .padding(.vertical, 11)
-            if !last { Divider() }
+            .font(.system(size: 14.5, weight: .semibold, design: .rounded))
+            .padding(.vertical, 12)
+            .padding(.horizontal, 16)
+            Divider().overlay(Theme.line)
         }
     }
 }

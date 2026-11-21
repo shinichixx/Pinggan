@@ -121,6 +121,9 @@ final class BackupService: ObservableObject {
 
             let data = (try? Data(contentsOf: Paths.data)) ?? Data("[]".utf8)
             try data.write(to: remoteJSON, options: .atomic)
+            if let pantry = try? Data(contentsOf: Paths.pantry) {
+                try? pantry.write(to: dest.appendingPathComponent("pantry.json"), options: .atomic)
+            }
             try data.write(to: history.appendingPathComponent("meals-\(Fmt.stamp.string(from: Date())).json"), options: .atomic)
             let old = ((try? fm.contentsOfDirectory(at: history, includingPropertiesForKeys: nil)) ?? [])
                 .filter { $0.pathExtension == "json" }
@@ -159,6 +162,9 @@ final class BackupService: ObservableObject {
                 try? fm.removeItem(at: target)
                 if (try? fm.copyItem(at: u, to: target)) != nil { copied += 1 }
             }
+            if let pantry = try? Data(contentsOf: src.appendingPathComponent("pantry.json")) {
+                try? pantry.write(to: Paths.pantry, options: .atomic)
+            }
             do {
                 try data.write(to: Paths.data, options: .atomic)
             } catch {
@@ -168,6 +174,7 @@ final class BackupService: ObservableObject {
         }.value
         ImageStore.clearCache()
         MealStore.shared.load()
+        Pantry.shared.load()
         return result
     }
 }

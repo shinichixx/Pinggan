@@ -180,39 +180,80 @@ enum ImageStore {
         guard let cg = base.cgImage else { return nil }
         var crop = cg
         if let r = rect(for: box, in: cg), let c = cg.cropping(to: r) { crop = c }
+        if let lifted = liftAll(crop), let name = saveLifted(lifted) { return name }
+        return plainCrop(crop, name: UUID().uuidString)
+    }
+
+    /// Saves an already cut-out dish (transparent background) as HEIC colour + PNG mask, at most 320 px.
+    static func saveLifted(_ lifted: CIImage) -> String? {
         let name = UUID().uuidString
+        let e = lifted.extent
+        guard e.width >= 8, e.height >= 8 else { return nil }
+        let s = min(1, 320 / max(e.width, e.height))
+        let scaled = lifted
+            .transformed(by: CGAffineTransform(translationX: -e.origin.x, y: -e.origin.y))
+            .transformed(by: CGAffineTransform(scaleX: s, y: s))
+        let ext = CGRect(x: 0, y: 0, width: (e.width * s).rounded(.down), height: (e.height * s).rounded(.down))
+        guard ext.width >= 8, ext.height >= 8 else { return nil }
 
-        if let lifted = liftSubject(crop) {
+        let white = CIImage(color: CIColor(red: 1, green: 1, blue: 1)).cropped(to: ext)
+        let color = scaled.composited(over: white).cropped(to: ext)
+
+        let m = CIFilter.colorMatrix()
+        m.inputImage = scaled
+        m.rVector = CIVector(x: 0, y: 0, z: 0, w: 1)
+        m.gVector = CIVector(x: 0, y: 0, z: 0, w: 1)
+        m.bVector = CIVector(x: 0, y: 0, z: 0, w: 1)
+        m.aVector = CIVector(x: 0, y: 0, z: 0, w: 0)
+        m.biasVector = CIVector(x: 0, y: 0, z: 0, w: 1)
+
+        guard let colorCG = ci.createCGImage(color, from: ext),
+              let colorData = encode(colorCG, type: .heic, quality: 0.65),
+              let maskCI = m.outputImage?.cropped(to: ext),
+              let maskCG = ci.createCGImage(maskCI, from: ext, format: .L8, colorSpace: CGColorSpaceCreateDeviceGray()),
+              let maskData = encode(maskCG, type: .png),
+              write(colorData, name: name + ".heic"),
+              write(maskData, name: name + ".mask.png") else { return nil }
+        return name
+    }
+
+    /// Small UIImage (with transparency) of a cut-out, for previews.
+    static func uiImage(_ ciImage: CIImage, maxSide: CGFloat = 200) -> UIImage? {
+        let e = ciImage.extent
+        guard e.width > 0, e.height > 0 else { return nil }
+        let s = min(1, maxSide / max(e.width, e.height))
+        let scaled = ciImage
+            .transformed(by: CGAffineTransform(translationX: -e.origin.x, y: -e.origin.y))
+            .transformed(by: CGAffineTransform(scaleX: s, y: s))
+        let ext = CGRect(x: 0, y: 0, width: (e.width * s).rounded(.down), height: (e.height * s).rounded(.down))
+        guard let cg = ci.createCGImage(scaled, from: ext) else { return nil }
+        return UIImage(cgImage: cg)
+    }
+
+    struct InstancePart {
+        let focus: CGImage
+        let lifted: CIImage
+        let preview: UIImage?
+    }
+
+    /// Each separate object (plate, bowl, cup) Vision finds in the photo, biggest first.
+    static func splitInstances(_ cg: CGImage) -> [InstancePart] {
+        let req = VNGenerateForegroundInstanceMaskRequest()
+        let handler = VNImageRequestHandler(cgImage: cg, options: [:])
+        guard (try? handler.perform([req])) != nil, let obs = req.results?.first else { return [] }
+        let total = Double(cg.width * cg.height)
+        var parts: [(Double, InstancePart)] = []
+        for idx in obs.allInstances {
+            guard let buf = try? obs.generateMaskedImage(ofInstances: IndexSet(integer: idx), from: handler, croppedToInstancesExtent: true) else { continue }
+            let lifted = CIImage(cvPixelBuffer: buf)
             let e = lifted.extent
-            let s = min(1, 320 / max(e.width, e.height))
-            let scaled = lifted
-                .transformed(by: CGAffineTransform(translationX: -e.origin.x, y: -e.origin.y))
-                .transformed(by: CGAffineTransform(scaleX: s, y: s))
-            let ext = CGRect(x: 0, y: 0, width: (e.width * s).rounded(.down), height: (e.height * s).rounded(.down))
-            guard ext.width >= 8, ext.height >= 8 else { return plainCrop(crop, name: name) }
-
-            let white = CIImage(color: CIColor(red: 1, green: 1, blue: 1)).cropped(to: ext)
-            let color = scaled.composited(over: white).cropped(to: ext)
-
-            let m = CIFilter.colorMatrix()
-            m.inputImage = scaled
-            m.rVector = CIVector(x: 0, y: 0, z: 0, w: 1)
-            m.gVector = CIVector(x: 0, y: 0, z: 0, w: 1)
-            m.bVector = CIVector(x: 0, y: 0, z: 0, w: 1)
-            m.aVector = CIVector(x: 0, y: 0, z: 0, w: 0)
-            m.biasVector = CIVector(x: 0, y: 0, z: 0, w: 1)
-
-            if let colorCG = ci.createCGImage(color, from: ext),
-               let colorData = encode(colorCG, type: .heic, quality: 0.65),
-               let maskCI = m.outputImage?.cropped(to: ext),
-               let maskCG = ci.createCGImage(maskCI, from: ext, format: .L8, colorSpace: CGColorSpaceCreateDeviceGray()),
-               let maskData = encode(maskCG, type: .png),
-               write(colorData, name: name + ".heic"),
-               write(maskData, name: name + ".mask.png") {
-                return name
-            }
+            let area = Double(e.width * e.height)
+            guard area / total > 0.015 else { continue }
+            let white = CIImage(color: CIColor(red: 1, green: 1, blue: 1)).cropped(to: e)
+            guard let focus = ci.createCGImage(lifted.composited(over: white).cropped(to: e), from: e) else { continue }
+            parts.append((area, InstancePart(focus: focus, lifted: lifted, preview: uiImage(lifted))))
         }
-        return plainCrop(crop, name: name)
+        return parts.sorted { $0.0 > $1.0 }.map { $0.1 }
     }
 
     private static func plainCrop(_ cg: CGImage, name: String) -> String? {
@@ -222,7 +263,7 @@ enum ImageStore {
     }
 
     /// Foreground (the plate) cut out of its background, cropped to the object. nil if Vision finds nothing.
-    private static func liftSubject(_ cg: CGImage) -> CIImage? {
+    static func liftAll(_ cg: CGImage) -> CIImage? {
         let req = VNGenerateForegroundInstanceMaskRequest()
         let handler = VNImageRequestHandler(cgImage: cg, options: [:])
         do {

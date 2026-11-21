@@ -15,12 +15,13 @@ struct NumberField: View {
         HStack {
             Text(label)
             Spacer()
-            if let prefix { Text(prefix).foregroundStyle(.secondary) }
+            if let prefix { Text(prefix).foregroundStyle(Theme.brown2) }
             TextField("0", text: $text)
                 .keyboardType(decimals > 0 ? .decimalPad : .numberPad)
                 .multilineTextAlignment(.trailing)
+                .font(.q(17, .bold))
                 .frame(width: 100)
-            if !unit.isEmpty { Text(unit).foregroundStyle(.secondary) }
+            if !unit.isEmpty { Text(unit).foregroundStyle(Theme.brown2) }
         }
         .onAppear { text = format(value) }
         .onChange(of: text) {
@@ -39,28 +40,30 @@ struct NumberField: View {
     }
 }
 
+/// A dish shown on a small round plate, like the icon.
 struct DishThumb: View {
     let dish: Dish?
     let meal: Meal?
-    var size: CGFloat = 46
+    var size: CGFloat = 50
     var preview: UIImage? = nil
 
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: size * 0.22, style: .continuous)
-        Color.clear
-            .frame(width: size, height: size)
-            .background(shape.fill(Theme.tile))
+        Circle()
+            .fill(Color(hex: 0xFFFAF6))
+            .overlay(Circle().stroke(Color(hex: 0xF3E4D9), lineWidth: max(1, size * 0.04)).padding(size * 0.2))
             .overlay {
-                if let img = preview {
-                    Image(uiImage: img).resizable().scaledToFill().frame(width: size, height: size).clipShape(shape)
-                } else if let img = ImageStore.cutoutImage(dish?.cutout) {
-                    Image(uiImage: img).resizable().scaledToFit().padding(size * 0.06)
+                if let img = preview ?? ImageStore.cutoutImage(dish?.cutout) {
+                    Image(uiImage: img).resizable().scaledToFit().padding(size * 0.12)
                 } else if let img = ImageStore.load(meal?.thumb) {
-                    Image(uiImage: img).resizable().scaledToFill().frame(width: size, height: size).clipShape(shape)
+                    Image(uiImage: img).resizable().scaledToFill()
+                        .frame(width: size * 0.84, height: size * 0.84)
+                        .clipShape(Circle())
                 } else {
-                    Image(systemName: "fork.knife").font(.system(size: size * 0.36)).foregroundStyle(.secondary)
+                    Image(systemName: "fork.knife").font(.system(size: size * 0.32, weight: .semibold)).foregroundStyle(Theme.brown3)
                 }
             }
+            .frame(width: size, height: size)
+            .shadow(color: Color(hex: 0x964632).opacity(0.18), radius: 4, y: 2)
     }
 }
 
@@ -68,29 +71,33 @@ struct MealRow: View {
     let meal: Meal
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(meal.caption).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 5) {
+                Image(systemName: meal.type.symbol).font(.system(size: 12, weight: .semibold))
+                Text(meal.caption).lineLimit(1)
+            }
+            .font(.system(size: 12.5, weight: .semibold, design: .rounded))
+            .foregroundStyle(Theme.brown2)
             HStack(spacing: 8) {
                 if meal.dishes.isEmpty {
                     DishThumb(dish: nil, meal: meal)
                 } else {
                     ForEach(meal.dishes.prefix(4)) { d in DishThumb(dish: d, meal: meal) }
                     if meal.dishes.count > 4 {
-                        Text("+\(meal.dishes.count - 4)").font(.caption).foregroundStyle(.secondary)
+                        Text("+\(meal.dishes.count - 4)").font(.q(13, .bold)).foregroundStyle(Theme.brown2)
                     }
                 }
                 Spacer(minLength: 4)
                 VStack(alignment: .trailing, spacing: 2) {
-                    Text(Fmt.kcal(meal.kcal)).font(.subheadline.weight(.semibold))
+                    Text(Fmt.kcal(meal.kcal)).font(.q(17, .bold)).foregroundStyle(Theme.brown)
                     if meal.cost > 0 {
-                        Text(Fmt.rm(meal.cost)).font(.caption).foregroundStyle(.secondary)
+                        Text(Fmt.rm(meal.cost)).font(.system(size: 12, weight: .semibold, design: .rounded)).foregroundStyle(Theme.brown2)
                     }
                 }
             }
         }
-        .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Theme.card))
+        .creamCard(padding: 13)
         .contentShape(Rectangle())
     }
 }
@@ -103,35 +110,46 @@ struct DishEditor: View {
     @Environment(\.dismiss) private var dismiss
     @State private var estimating = false
     @State private var errorText: String?
+    @State private var remember = true
 
     var body: some View {
         NavigationStack {
             Form {
                 Section {
                     TextField("Dish name, e.g. nasi lemak ayam", text: $dish.name)
+                        .font(.q(17, .semibold))
                 }
+                .listRowBackground(Theme.cream)
                 Section {
                     NumberField(label: "Calories", value: $dish.kcal, unit: "kcal")
                     NumberField(label: "Protein", value: $dish.protein, unit: "g")
                     NumberField(label: "Carbs", value: $dish.carbs, unit: "g")
                     NumberField(label: "Fat", value: $dish.fat, unit: "g")
                 } header: {
-                    Text("Nutrition (estimate)")
+                    Text("Nutrition (estimate)").foregroundStyle(Theme.brown2)
                 }
+                .listRowBackground(Theme.cream)
                 Section {
                     Button {
                         Task { await estimate() }
                     } label: {
                         HStack {
-                            Label("Estimate from the name with AI", systemImage: "sparkles")
+                            Label("Estimate from the name (\(FoodAI.modeTitle))", systemImage: "sparkles")
+                                .foregroundStyle(Theme.coral)
                             if estimating { Spacer(); ProgressView() }
                         }
                     }
                     .disabled(estimating || dish.name.trimmingCharacters(in: .whitespaces).isEmpty)
+                    Toggle("Remember for next time", isOn: $remember)
+                        .tint(Theme.coral)
                     if let errorText {
                         Text(errorText).font(.footnote).foregroundStyle(.red)
                     }
+                } footer: {
+                    Text("Remembered dishes get these numbers automatically when the AI finds the same name again.")
+                        .foregroundStyle(Theme.brown2)
                 }
+                .listRowBackground(Theme.cream)
                 if let onDelete {
                     Section {
                         Button("Remove dish", role: .destructive) {
@@ -139,17 +157,21 @@ struct DishEditor: View {
                             dismiss()
                         }
                     }
+                    .listRowBackground(Theme.cream)
                 }
             }
+            .creamList()
             .navigationTitle(dish.name.isEmpty ? "New dish" : "Edit dish")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
+                        if remember { Pantry.shared.remember(dish) }
                         onSave(dish)
                         dismiss()
                     }
+                    .fontWeight(.bold)
                 }
             }
         }
@@ -159,19 +181,98 @@ struct DishEditor: View {
         estimating = true
         errorText = nil
         do {
-            let found = try await ClaudeClient.estimate(dish.name)
-            if !found.isEmpty {
-                dish.kcal = found.reduce(0) { $0 + ($1.kcal ?? 0) }
-                dish.protein = found.reduce(0) { $0 + ($1.protein_g ?? 0) }
-                dish.carbs = found.reduce(0) { $0 + ($1.carbs_g ?? 0) }
-                dish.fat = found.reduce(0) { $0 + ($1.fat_g ?? 0) }
+            if let d = try await FoodAI.estimate(dish.name) {
+                dish.kcal = d.kcal
+                dish.protein = d.protein
+                dish.carbs = d.carbs
+                dish.fat = d.fat
             } else {
-                errorText = "Claude didn't recognise that as food."
+                errorText = "The AI didn't recognise that as food."
             }
         } catch {
             errorText = error.localizedDescription
         }
         estimating = false
+    }
+}
+
+/// Confirm a packaged product read from its label or barcode, and how much of it you had.
+struct ProductSheet: View {
+    @State var product: Product
+    let source: String
+    var onAdd: (Dish, Product) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var servings: Double = 1
+    @State private var save = true
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    if !source.isEmpty {
+                        Label(source, systemImage: "checkmark.seal").foregroundStyle(Theme.coral).font(.q(15, .bold))
+                    }
+                    TextField("Product name", text: $product.name)
+                    TextField("Brand", text: $product.brand)
+                    HStack {
+                        Text("Serving")
+                        Spacer()
+                        TextField("1 serving", text: $product.serving).multilineTextAlignment(.trailing)
+                    }
+                    if let code = product.barcode {
+                        HStack { Text("Barcode"); Spacer(); Text(code).foregroundStyle(Theme.brown2) }
+                    }
+                }
+                .listRowBackground(Theme.cream)
+                Section {
+                    NumberField(label: "Calories", value: $product.kcal, unit: "kcal")
+                    NumberField(label: "Protein", value: $product.protein, unit: "g", decimals: 1)
+                    NumberField(label: "Carbs", value: $product.carbs, unit: "g", decimals: 1)
+                    NumberField(label: "Fat", value: $product.fat, unit: "g", decimals: 1)
+                } header: {
+                    Text("Per serving (\(product.serving))").foregroundStyle(Theme.brown2)
+                }
+                .listRowBackground(Theme.cream)
+                Section {
+                    Stepper(value: $servings, in: 0.25...20, step: 0.25) {
+                        HStack {
+                            Text("I had")
+                            Spacer()
+                            Text("\(servings.formatted()) × \(product.serving)").font(.q(16, .bold))
+                        }
+                    }
+                    HStack {
+                        Text("That's")
+                        Spacer()
+                        Text(Fmt.kcal(product.kcal * servings)).font(.q(18, .bold)).foregroundStyle(Theme.coral)
+                    }
+                    Toggle("Save product for next time", isOn: $save).tint(Theme.coral)
+                } footer: {
+                    Text("Saved products fill in instantly when you scan the same barcode again, even offline.")
+                        .foregroundStyle(Theme.brown2)
+                }
+                .listRowBackground(Theme.cream)
+            }
+            .creamList()
+            .navigationTitle("Check the label")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Add") {
+                        let d = Dish(name: product.displayName,
+                                     kcal: product.kcal * servings, protein: product.protein * servings,
+                                     carbs: product.carbs * servings, fat: product.fat * servings)
+                        if save { Pantry.shared.upsert(product) }
+                        onAdd(d, product)
+                        dismiss()
+                    }
+                    .fontWeight(.bold)
+                    .disabled(product.kcal <= 0)
+                }
+            }
+        }
     }
 }
 
@@ -187,7 +288,7 @@ struct PhotoViewer: View {
                 .resizable()
                 .scaledToFit()
                 .scaleEffect(scale)
-                .gesture(MagnificationGesture().onChanged { scale = max(1, $0) }.onEnded { _ in withAnimation { scale = 1 } })
+                .gesture(MagnifyGesture().onChanged { scale = max(1, $0.magnification) }.onEnded { _ in withAnimation { scale = 1 } })
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             Button { dismiss() } label: {
                 Image(systemName: "xmark").font(.headline).foregroundStyle(.white)

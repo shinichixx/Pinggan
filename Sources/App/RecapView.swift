@@ -3,22 +3,29 @@ import UIKit
 
 struct RecapTheme: Identifiable {
     let id: Int
-    let bg: Color
-    let fg: Color
+    let colors: [Color]
+    let title: Color
     let accent: Color
-    let cell: Color
-    let sub: Color
+
+    var gradient: LinearGradient {
+        LinearGradient(colors: colors, startPoint: .topTrailing, endPoint: .bottomLeading)
+    }
 
     static let all: [RecapTheme] = [
-        RecapTheme(id: 0, bg: Color(hex: 0xFBF6EE), fg: Color(hex: 0x2C2C2A), accent: Color(hex: 0xD85A30), cell: Color(hex: 0xEFE7DA), sub: Color(hex: 0x888780)),
-        RecapTheme(id: 1, bg: Color(hex: 0xD85A30), fg: .white, accent: Color(hex: 0xFAECE7), cell: Color(hex: 0xE3774F), sub: Color(hex: 0xFAECE7)),
-        RecapTheme(id: 2, bg: Color(hex: 0x0F6E56), fg: .white, accent: Color(hex: 0x9FE1CB), cell: Color(hex: 0x1C7F65), sub: Color(hex: 0xC9EEDF)),
-        RecapTheme(id: 3, bg: Color(hex: 0x26215C), fg: .white, accent: Color(hex: 0xAFA9EC), cell: Color(hex: 0x37317A), sub: Color(hex: 0xCECBF6)),
-        RecapTheme(id: 4, bg: Color(hex: 0x2C2C2A), fg: .white, accent: Color(hex: 0xF0997B), cell: Color(hex: 0x3E3E3B), sub: Color(hex: 0xB4B2A9))
+        RecapTheme(id: 0, colors: [Color(hex: 0xFFD794), Color(hex: 0xFDB487), Color(hex: 0xFB8C74), Color(hex: 0xF7655F)],
+                   title: .white, accent: Color(hex: 0xFFF1D8)),
+        RecapTheme(id: 1, colors: [Color(hex: 0xFFF1D8), Color(hex: 0xFFD7B5), Color(hex: 0xFDB487)],
+                   title: Color(hex: 0x6A3D2C), accent: Color(hex: 0xE2603F)),
+        RecapTheme(id: 2, colors: [Color(hex: 0xE3F2C4), Color(hex: 0x9FD8A8), Color(hex: 0x5DB58F)],
+                   title: Color(hex: 0x1F4D3A), accent: Color(hex: 0x2E7D5B)),
+        RecapTheme(id: 3, colors: [Color(hex: 0xF0997B), Color(hex: 0x8A5BA8), Color(hex: 0x3C3489)],
+                   title: .white, accent: Color(hex: 0xFFD9C6)),
+        RecapTheme(id: 4, colors: [Color(hex: 0x7A5A4A), Color(hex: 0x3E3330), Color(hex: 0x2C2C2A)],
+                   title: .white, accent: Color(hex: 0xF0997B))
     ]
 }
 
-/// The shareable month card. Drawn at 360 pt wide and rendered at 3× (1080 px).
+/// The shareable month card: your month drawn on a plate, like the app icon. 360 pt wide, rendered at 3× (1080 px).
 struct RecapCard: View {
     let month: Date
     let meals: [Meal]
@@ -28,111 +35,138 @@ struct RecapCard: View {
 
     private let width: CGFloat = 360
     private var height: CGFloat { story ? 640 : 450 }
-    private var pad: CGFloat { story ? 24 : 18 }
-    private var gap: CGFloat { story ? 6 : 4 }
-    private var cell: CGFloat { ((width - pad * 2 - gap * 6) / 7).rounded(.down) }
+    private var plate: CGFloat { story ? 318 : 262 }
+    private var grid: CGFloat { (plate * 0.66).rounded() }
 
     var body: some View {
         let byDay = Dictionary(grouping: meals) { Calendar.current.startOfDay(for: $0.date) }
         let days = CalendarMath.gridDays(for: month)
         let rows = days.count / 7
+        let cell = (grid / 7).rounded(.down)
         let stats = MonthStats(meals: meals)
 
-        VStack(alignment: .leading, spacing: 0) {
-            Text("PINGGAN · MONTH IN PLATES")
-                .font(.system(size: 10, weight: .semibold))
-                .tracking(1.4)
-                .foregroundStyle(theme.accent)
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(Fmt.monthName.string(from: month))
-                    .font(.system(size: story ? 42 : 32, weight: .bold, design: .rounded))
-                    .foregroundStyle(theme.fg)
-                Text(Fmt.year.string(from: month))
-                    .font(.system(size: story ? 20 : 16, weight: .medium, design: .rounded))
-                    .foregroundStyle(theme.accent)
-            }
-            .padding(.top, 2)
+        ZStack {
+            theme.gradient
+            Image(systemName: "leaf")
+                .font(.system(size: 120, weight: .light))
+                .rotationEffect(.degrees(-20))
+                .foregroundStyle(.white.opacity(0.16))
+                .position(x: 24, y: story ? 140 : 110)
+            Image(systemName: "fork.knife")
+                .font(.system(size: 100, weight: .light))
+                .rotationEffect(.degrees(18))
+                .foregroundStyle(.white.opacity(0.16))
+                .position(x: width - 18, y: story ? 420 : 300)
 
-            Spacer(minLength: story ? 18 : 8)
-
-            HStack(spacing: gap) {
-                ForEach(Array(CalendarMath.weekdayLetters.enumerated()), id: \.offset) { _, l in
-                    Text(l).font(.system(size: 10, weight: .medium)).foregroundStyle(theme.sub).frame(width: cell)
-                }
-            }
-            .padding(.bottom, 4)
-
-            VStack(spacing: gap) {
-                ForEach(0..<rows, id: \.self) { r in
-                    HStack(spacing: gap) {
-                        ForEach(0..<7, id: \.self) { c in
-                            if let day = days[r * 7 + c] {
-                                dayCell(day, meals: byDay[day] ?? [])
-                            } else {
-                                Color.clear.frame(width: cell, height: cell)
-                            }
-                        }
+            VStack(spacing: 0) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("MY MONTH IN PLATES").font(.q(10, .bold)).tracking(2).foregroundStyle(theme.title.opacity(0.9))
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(Fmt.monthName.string(from: month)).font(.q(story ? 40 : 32, .bold)).foregroundStyle(theme.title)
+                        Text(Fmt.year.string(from: month)).font(.q(story ? 19 : 16, .bold)).foregroundStyle(theme.accent)
                     }
                 }
-            }
+                .frame(maxWidth: .infinity, alignment: .leading)
 
-            Spacer(minLength: story ? 18 : 8)
+                Spacer(minLength: story ? 14 : 6)
 
-            Text("\(stats.dishCount) dishes · \(stats.daysLogged) days logged")
-                .font(.system(size: story ? 15 : 13, weight: .medium, design: .rounded))
-                .foregroundStyle(theme.fg)
-            if showNumbers {
-                Text("\(Fmt.kcal(stats.totalKcal)) · \(Fmt.rm(stats.spent))")
-                    .font(.system(size: story ? 13 : 12, design: .rounded))
-                    .foregroundStyle(theme.sub)
-                    .padding(.top, 2)
-            }
-            if let t = stats.topSpot {
-                Text("Top spot: \(t.name) ×\(t.visits)")
-                    .font(.system(size: story ? 13 : 12, design: .rounded))
-                    .foregroundStyle(theme.sub)
-                    .lineLimit(1)
-                    .padding(.top, 2)
-            }
+                ZStack(alignment: .bottomTrailing) {
+                    Circle()
+                        .fill(RadialGradient(colors: [Color(hex: 0xFFFCF9), Color(hex: 0xFFF8F2)], center: .center, startRadius: 0, endRadius: plate / 2))
+                        .overlay(Circle().stroke(Color(hex: 0xF2DED0), lineWidth: 2).padding(plate * 0.165))
+                        .frame(width: plate, height: plate)
+                        .shadow(color: Color(hex: 0x963220).opacity(0.32), radius: 15, y: 12)
+                        .overlay {
+                            VStack(spacing: 0) {
+                                HStack(spacing: 0) {
+                                    ForEach(Array(CalendarMath.weekdayLetters.enumerated()), id: \.offset) { _, l in
+                                        Text(l).font(.q(7.5, .bold)).foregroundStyle(Color(hex: 0xC19A86)).frame(width: cell)
+                                    }
+                                }
+                                .padding(.bottom, 2)
+                                ForEach(0..<rows, id: \.self) { r in
+                                    HStack(spacing: 0) {
+                                        ForEach(0..<7, id: \.self) { c in
+                                            cellView(days[r * 7 + c], byDay: byDay, size: cell)
+                                                .overlay(alignment: .trailing) {
+                                                    if c < 6 { Rectangle().fill(Color(hex: 0xF0DDD0)).frame(width: 0.6) }
+                                                }
+                                        }
+                                    }
+                                    .overlay(alignment: .bottom) {
+                                        if r < rows - 1 { Rectangle().fill(Color(hex: 0xF0DDD0)).frame(height: 0.6) }
+                                    }
+                                }
+                            }
+                        }
 
-            HStack(spacing: 6) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 5, style: .continuous).fill(Color(hex: 0xD85A30)).frame(width: 20, height: 20)
-                    Circle().stroke(Color(hex: 0xFAECE7), lineWidth: 2.5).frame(width: 10, height: 10)
+                    HStack(spacing: 6) {
+                        FlipCounter(value: Double(stats.dishCount), size: 17, unit: "dishes", showFire: false)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .background(
+                        RoundedRectangle(cornerRadius: 13, style: .continuous)
+                            .fill(LinearGradient(colors: [Color(hex: 0xFFFDFB), Color(hex: 0xFBF1EA)], startPoint: .top, endPoint: .bottom))
+                            .shadow(color: Color(hex: 0x782814).opacity(0.3), radius: 9, y: 6)
+                    )
+                    .offset(x: 18, y: -6)
                 }
-                Text("Pinggan").font(.system(size: 13, weight: .bold, design: .rounded)).foregroundStyle(theme.fg)
-                Spacer()
+
+                Spacer(minLength: story ? 14 : 6)
+
+                VStack(spacing: 3) {
+                    Text(summaryLine(stats))
+                        .font(.q(13, .bold)).foregroundStyle(theme.title).lineLimit(1).minimumScaleFactor(0.7)
+                    if showNumbers {
+                        Text("\(Fmt.kcal(stats.totalKcal)) · \(Fmt.rm(stats.spent))")
+                            .font(.q(12.5, .semibold)).foregroundStyle(theme.title.opacity(0.85))
+                    }
+                }
+
+                if story {
+                    Text("Pinggan")
+                        .font(.q(44, .semibold))
+                        .foregroundStyle(theme.title == .white ? Color(hex: 0xFFF6EF) : theme.title)
+                        .shadow(color: Color(hex: 0x963220).opacity(0.22), radius: 4, y: 2)
+                        .padding(.top, 18)
+                } else {
+                    Text("Pinggan").font(.q(22, .semibold)).foregroundStyle(theme.title).padding(.top, 6)
+                }
             }
-            .padding(.top, story ? 14 : 8)
+            .padding(.horizontal, 24)
+            .padding(.vertical, story ? 28 : 18)
         }
-        .padding(pad)
-        .frame(width: width, height: height, alignment: .topLeading)
-        .background(theme.bg)
+        .frame(width: width, height: height)
+        .clipped()
+    }
+
+    private func summaryLine(_ s: MonthStats) -> String {
+        var parts = ["\(s.daysLogged) \(s.daysLogged == 1 ? "day" : "days") at the table"]
+        if let t = s.topSpot { parts.append("Top spot \(t.name)") }
+        return parts.joined(separator: " · ")
     }
 
     @ViewBuilder
-    private func dayCell(_ day: Date, meals: [Meal]) -> some View {
-        let hero = DayHero(meals: meals)
-        let shape = RoundedRectangle(cornerRadius: 7, style: .continuous)
-        ZStack {
-            shape.fill(theme.cell)
-            if let img = hero.cutout {
-                Image(uiImage: img).resizable().scaledToFit().padding(2)
-            } else if let img = hero.photo {
-                Image(uiImage: img).resizable().scaledToFill().frame(width: cell, height: cell).clipShape(shape)
+    private func cellView(_ day: Date?, byDay: [Date: [Meal]], size: CGFloat) -> some View {
+        if let day {
+            let hero = DayHero(meals: byDay[day] ?? [])
+            ZStack(alignment: .topLeading) {
+                Color.clear
+                if let img = hero.cutout {
+                    Image(uiImage: img).resizable().scaledToFit().padding(size * 0.12)
+                        .frame(width: size, height: size)
+                } else if let img = hero.photo {
+                    Image(uiImage: img).resizable().scaledToFill()
+                        .frame(width: size * 0.8, height: size * 0.8).clipShape(Circle())
+                        .frame(width: size, height: size)
+                }
+                Text("\(Calendar.current.component(.day, from: day))")
+                    .font(.q(5.5, .bold)).foregroundStyle(Color(hex: 0xC19A86)).padding(1.5)
             }
-        }
-        .frame(width: cell, height: cell)
-        .overlay(alignment: .topLeading) {
-            Text("\(Calendar.current.component(.day, from: day))")
-                .font(.system(size: 8, weight: .medium))
-                .foregroundStyle(theme.sub)
-                .padding(3)
-        }
-        .overlay(alignment: .bottomTrailing) {
-            if hero.extra > 0 {
-                Text("+\(hero.extra)").font(.system(size: 8, weight: .bold)).foregroundStyle(theme.accent).padding(3)
-            }
+            .frame(width: size, height: size)
+        } else {
+            Color.clear.frame(width: size, height: size)
         }
     }
 }
@@ -140,6 +174,7 @@ struct RecapCard: View {
 struct RecapView: View {
     let month: Date
 
+    @Environment(\.dismiss) private var dismiss
     @ObservedObject private var store = MealStore.shared
     @State private var themeIndex = 0
     @State private var showNumbers = false
@@ -150,71 +185,81 @@ struct RecapView: View {
     private var title: String { Fmt.monthYear.string(from: month) }
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: 16) {
-                Group {
-                    if let rendered {
-                        Image(uiImage: rendered)
-                            .resizable()
-                            .scaledToFit()
-                            .frame(maxHeight: 520)
-                            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                            .shadow(color: .black.opacity(0.15), radius: 10, y: 4)
-                    } else {
-                        ProgressView().frame(height: 300)
+        ZStack {
+            Color(hex: 0xFFF4EC).ignoresSafeArea()
+            ScrollView {
+                VStack(spacing: 16) {
+                    HStack {
+                        Button { dismiss() } label: {
+                            Image(systemName: "chevron.left").font(.system(size: 18, weight: .bold)).foregroundStyle(Theme.coral)
+                                .frame(width: 36, height: 36)
+                        }
+                        Spacer()
+                        Text("Monthly recap").font(.q(18, .bold)).foregroundStyle(Theme.brown)
+                        Spacer()
+                        Color.clear.frame(width: 36, height: 36)
                     }
-                }
 
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Colour").font(.subheadline).foregroundStyle(.secondary)
-                    HStack(spacing: 12) {
+                    Group {
+                        if let rendered {
+                            Image(uiImage: rendered)
+                                .resizable()
+                                .scaledToFit()
+                                .frame(maxHeight: 540)
+                                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                                .shadow(color: Color(hex: 0x3C140A).opacity(0.3), radius: 14, y: 8)
+                        } else {
+                            ProgressView().frame(height: 300)
+                        }
+                    }
+
+                    HStack(spacing: 14) {
                         ForEach(RecapTheme.all) { t in
                             Circle()
-                                .fill(t.bg)
-                                .frame(width: 30, height: 30)
-                                .overlay(Circle().stroke(themeIndex == t.id ? Theme.accent : Color.secondary.opacity(0.3),
-                                                         lineWidth: themeIndex == t.id ? 3 : 1))
+                                .fill(t.gradient)
+                                .frame(width: 32, height: 32)
+                                .overlay(Circle().stroke(.white, lineWidth: themeIndex == t.id ? 3 : 0))
+                                .overlay(Circle().stroke(Theme.coral, lineWidth: themeIndex == t.id ? 2 : 0).padding(-3))
                                 .onTapGesture { themeIndex = t.id }
                                 .accessibilityLabel("Colour \(t.id + 1)")
                         }
                     }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
 
-                Toggle("Show spend and calories", isOn: $showNumbers)
+                    Toggle("Show spend and calories", isOn: $showNumbers)
+                        .font(.system(size: 15, weight: .semibold, design: .rounded))
+                        .foregroundStyle(Theme.brown)
+                        .tint(Theme.coral)
+                        .creamCard()
 
-                Picker("Size", selection: $story) {
-                    Text("Story 9:16").tag(true)
-                    Text("Post 4:5").tag(false)
-                }
-                .pickerStyle(.segmented)
+                    PillPicker(options: [(true, "Story 9:16"), (false, "Post 4:5")], selection: $story, light: true)
 
-                if let rendered {
-                    HStack(spacing: 10) {
-                        ShareLink(item: Image(uiImage: rendered),
-                                  preview: SharePreview("Pinggan · \(title)", image: Image(uiImage: rendered))) {
-                            Label("Share", systemImage: "square.and.arrow.up")
+                    if let rendered {
+                        HStack(spacing: 10) {
+                            ShareLink(item: Image(uiImage: rendered),
+                                      preview: SharePreview("Pinggan · \(title)", image: Image(uiImage: rendered))) {
+                                Label("Share", systemImage: "square.and.arrow.up")
+                            }
+                            .buttonStyle(AccentButtonStyle())
+                            Button {
+                                UIImageWriteToSavedPhotosAlbum(rendered, nil, nil, nil)
+                                savedNote = "Saved to Photos"
+                            } label: {
+                                Label("Save", systemImage: "square.and.arrow.down")
+                            }
+                            .buttonStyle(OutlineButtonStyle())
                         }
-                        .buttonStyle(AccentButtonStyle())
-                        Button {
-                            UIImageWriteToSavedPhotosAlbum(rendered, nil, nil, nil)
-                            savedNote = "Saved to Photos"
-                        } label: {
-                            Label("Save to Photos", systemImage: "square.and.arrow.down")
-                        }
-                        .buttonStyle(OutlineButtonStyle())
                     }
+                    if let savedNote {
+                        Text(savedNote).font(.footnote).foregroundStyle(Theme.brown2)
+                    }
+                    Text("Each day shows your starred dish, or the biggest one. Star a dish in its meal to choose it.")
+                        .font(.footnote).foregroundStyle(Theme.brown2).multilineTextAlignment(.center)
                 }
-                if let savedNote {
-                    Text(savedNote).font(.footnote).foregroundStyle(.secondary)
-                }
-                Text("Each day shows your starred dish, or the biggest one. Star a dish in its meal to choose it.")
-                    .font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                .padding(.horizontal, 20)
+                .padding(.bottom, 24)
             }
-            .padding()
         }
-        .navigationTitle("Monthly recap")
-        .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.hidden, for: .navigationBar)
         .onAppear { render() }
         .onChange(of: themeIndex) { render() }
         .onChange(of: showNumbers) { render() }
