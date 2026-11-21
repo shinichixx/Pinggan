@@ -222,15 +222,16 @@ struct DayCell: View {
             }
             .background {
                 if selected {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color(hex: 0xFFE6D8))
-                        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Theme.coral2, lineWidth: 2))
+                    RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Color(hex: 0xFFE6D8))
+                        .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(Theme.coral2, lineWidth: 2))
+                        .padding(3)
                 }
             }
             .overlay(alignment: .topLeading) {
                 Text("\(Calendar.current.component(.day, from: day))")
                     .font(.q(9.5, .bold))
-                    .foregroundStyle(Theme.brown3)
-                    .padding(3)
+                    .foregroundStyle(selected ? Theme.coral : Theme.brown3)
+                    .padding(.top, 5).padding(.leading, 6)
             }
             .overlay(alignment: .bottomTrailing) {
                 if hero.extra > 0 {

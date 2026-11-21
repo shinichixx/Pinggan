@@ -1,46 +1,178 @@
 import SwiftUI
-import UniformTypeIdentifiers
+
+// MARK: - Main Settings page: one row per group, details on sub-pages
 
 struct SettingsView: View {
     @ObservedObject private var backup = BackupService.shared
     @ObservedObject private var store = MealStore.shared
     @ObservedObject private var pantry = Pantry.shared
-
     @AppStorage(Keys.aiMode) private var aiMode = AIMode.onDevice.rawValue
     @AppStorage(Keys.aiModel) private var model = ClaudeClient.defaultModel
     @AppStorage(Keys.photoSide) private var photoSide = 1280
     @AppStorage(Keys.shrinkMonths) private var shrinkMonths = 6
-    @AppStorage(Keys.shrinkSide) private var shrinkSide = 800
-
-    @State private var key = Keychain.get(ClaudeClient.keychainKey) ?? ""
-    @State private var testing = false
-    @State private var testResult: String?
     @State private var bytes: Int64 = 0
-    @State private var importer: ImporterMode?
-    @State private var showImporter = false
-    @State private var restoreURL: URL?
-    @State private var confirmRestore = false
-    @State private var restoreMessage: String?
-    @State private var confirmForget = false
-
-    private enum ImporterMode { case backupFolder, restore }
-
-    private var keyMasked: String {
-        let k = key.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard k.count > 12 else { return k.isEmpty ? "Not set" : "Set" }
-        return String(k.prefix(7)) + "••••" + String(k.suffix(4))
-    }
 
     var body: some View {
-        let usage = Usage.thisMonth
         let device = OnDeviceAI.status
-        Form {
-            Section {
-                Text("Settings").font(.q(34, .bold)).foregroundStyle(.white)
-                    .listRowBackground(Color.clear)
-                    .listRowInsets(EdgeInsets(top: 0, leading: 4, bottom: 0, trailing: 0))
-            }
+        ZStack {
+            PageBackground()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    PageHeader(title: "Settings", subtitle: "Pinggan \(appVersion)") { EmptyView() }
+                        .padding(.bottom, 4)
 
+                    VStack(spacing: 0) {
+                        link(icon: "sparkles", color: Theme.coral, title: "Food AI",
+                             summary: aiMode == AIMode.claude.rawValue ? "Claude" : "On-device · \(device.ready ? "ready" : "not ready")") {
+                            FoodAISettings()
+                        }
+                        divider
+                        link(icon: "key.fill", color: Color(hex: 0xD97757), title: "Claude",
+                             summary: (ClaudeClient.hasKey ? "Key saved" : "No key") + " · " + (model.contains("haiku") ? "Haiku 5.5" : "Sonnet 5.5")) {
+                            ClaudeSettings()
+                        }
+                        divider
+                        link(icon: "leaf.fill", color: Color(hex: 0x5DB58F), title: "My food",
+                             summary: "\(pantry.products.count) products · \(pantry.dishes.count) remembered dishes") {
+                            MyFoodSettings()
+                        }
+                    }
+                    .creamCard(padding: 0)
+
+                    VStack(spacing: 0) {
+                        link(icon: "photo.fill", color: Theme.peach, title: "Storage",
+                             summary: "\(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)) · \(photoSide) px · " +
+                                (shrinkMonths == 0 ? "never shrink" : "shrink after \(shrinkMonths) months")) {
+                            StorageSettings()
+                        }
+                        divider
+                        link(icon: "icloud.and.arrow.up.fill", color: Color(hex: 0x378ADD), title: "Backup",
+                             summary: backupSummary) {
+                            BackupSettings()
+                        }
+                    }
+                    .creamCard(padding: 0)
+
+                    VStack(spacing: 0) {
+                        NavigationLink {
+                            AboutSettings()
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image("AppIconPreview").resizable().frame(width: 32, height: 32)
+                                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                rowText("About Pinggan", "Version \(appVersion) · \(store.meals.count) meals")
+                                Spacer()
+                                chevron
+                            }
+                            .padding(.horizontal, 14).padding(.vertical, 11)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .creamCard(padding: 0)
+                }
+                .padding(.horizontal, 20)
+            }
+        }
+        .toolbar(.hidden, for: .navigationBar)
+        .onAppear {
+            Task.detached(priority: .utility) {
+                let b = ImageStore.folderBytes()
+                await MainActor.run { bytes = b }
+            }
+        }
+    }
+
+    private var backupSummary: String {
+        guard let name = backup.folderName else { return "Not set up" }
+        if let d = backup.lastBackup { return "\(name) · \(Fmt.dayShort.string(from: d))" }
+        return name
+    }
+
+    private var divider: some View { Divider().overlay(Theme.line).padding(.leading, 56) }
+    private var chevron: some View { Image(systemName: "chevron.right").font(.system(size: 13, weight: .bold)).foregroundStyle(Theme.brown3) }
+
+    private func rowText(_ title: String, _ summary: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title).font(.system(size: 15.5, weight: .semibold, design: .rounded)).foregroundStyle(Theme.brown)
+            Text(summary).font(.system(size: 12, weight: .medium, design: .rounded)).foregroundStyle(Theme.brown2).lineLimit(1)
+        }
+    }
+
+    private func link<D: View>(icon: String, color: Color, title: String, summary: String, @ViewBuilder destination: @escaping () -> D) -> some View {
+        NavigationLink {
+            destination()
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: icon)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 32, height: 32)
+                    .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(color))
+                rowText(title, summary)
+                Spacer()
+                chevron
+            }
+            .padding(.horizontal, 14).padding(.vertical, 11)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+var appVersion: String {
+    let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
+    let b = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1"
+    return "\(v) (build \(b))"
+}
+
+// MARK: - Sub-page frame
+
+/// Gradient page with a back button and title, and a cream form underneath.
+struct SettingsPage<Content: View>: View {
+    let title: String
+    @ViewBuilder var content: Content
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        ZStack(alignment: .top) {
+            PageBackground()
+            VStack(spacing: 0) {
+                HStack(spacing: 10) {
+                    RoundNavButton(icon: "chevron.left") { dismiss() }
+                    Text(title).font(.q(24, .bold)).foregroundStyle(.white)
+                    Spacer()
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 6)
+                .padding(.bottom, 4)
+                Form { content }
+                    .scrollContentBackground(.hidden)
+                    .contentMargins(.top, 8, for: .scrollContent)
+                    .foregroundStyle(Theme.brown)
+            }
+        }
+        .toolbar(.hidden, for: .navigationBar)
+    }
+}
+
+private func footerText(_ t: String) -> some View {
+    Text(t).foregroundStyle(Theme.brown2)
+}
+
+private func statusColor(_ s: String) -> Color {
+    let bad = ["couldn't", "failed", "didn't", "not found", "paused", "unavailable"]
+    return bad.contains { s.lowercased().contains($0) } ? Color(hex: 0xC0392B) : Theme.brown2
+}
+
+// MARK: - Food AI
+
+struct FoodAISettings: View {
+    @AppStorage(Keys.aiMode) private var aiMode = AIMode.onDevice.rawValue
+
+    var body: some View {
+        let device = OnDeviceAI.status
+        SettingsPage(title: "Food AI") {
             Section {
                 Picker("Food AI", selection: $aiMode) {
                     Text("On-device · free").tag(AIMode.onDevice.rawValue)
@@ -53,22 +185,43 @@ struct SettingsView: View {
                         .foregroundStyle(device.ready ? Color(hex: 0x3B9C6B) : Color(hex: 0xC0392B))
                         .multilineTextAlignment(.trailing)
                 }
-            } header: {
-                sectionHeader("Food AI")
             } footer: {
-                Text("On-device AI runs on your iPhone with Apple Intelligence: free, private and works offline, but its names and numbers are rougher. Claude is more accurate for local dishes and needs API credit.")
-                    .foregroundStyle(Theme.brown2)
+                footerText("On-device AI runs on your iPhone with Apple Intelligence: free, private and works offline, but its names and numbers are rougher. Claude is more accurate for local dishes and needs API credit.")
             }
             .listRowBackground(Theme.cream)
+        }
+    }
+}
 
+// MARK: - Claude
+
+struct ClaudeSettings: View {
+    @AppStorage(Keys.aiModel) private var model = ClaudeClient.defaultModel
+    @State private var key = Keychain.get(ClaudeClient.keychainKey) ?? ""
+    @State private var testing = false
+    @State private var testResult: String?
+
+    private var keyMasked: String {
+        let k = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard k.count > 12 else { return k.isEmpty ? "Not set" : "Set" }
+        return String(k.prefix(7)) + "••••" + String(k.suffix(4))
+    }
+
+    var body: some View {
+        let usage = Usage.thisMonth
+        SettingsPage(title: "Claude") {
             Section {
-                SecureField("sk-ant-…", text: $key)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .onChange(of: key) {
-                        Keychain.set(key.trimmingCharacters(in: .whitespacesAndNewlines), for: ClaudeClient.keychainKey)
-                        testResult = nil
-                    }
+                HStack {
+                    Text("Paste new key")
+                    SecureField("", text: $key, prompt: Text("sk-ant-…").foregroundStyle(Theme.brown3))
+                        .multilineTextAlignment(.trailing)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                }
+                .onChange(of: key) {
+                    Keychain.set(key.trimmingCharacters(in: .whitespacesAndNewlines), for: ClaudeClient.keychainKey)
+                    testResult = nil
+                }
                 HStack {
                     Text("Key")
                     Spacer()
@@ -93,8 +246,15 @@ struct SettingsView: View {
                 }
                 .disabled(key.isEmpty || testing)
                 if let testResult {
-                    Text(testResult).font(.footnote).foregroundStyle(testResult == "Key works." ? Color(hex: 0x3B9C6B) : Color(hex: 0xC0392B))
+                    Text(testResult).font(.footnote)
+                        .foregroundStyle(testResult == "Key works." ? Color(hex: 0x3B9C6B) : Color(hex: 0xC0392B))
                 }
+            } footer: {
+                footerText("Create a key at platform.claude.com under API keys, and add credit under Billing. The key stays in this iPhone's Keychain and is only sent to Anthropic.")
+            }
+            .listRowBackground(Theme.cream)
+
+            Section {
                 Picker("Model", selection: $model) {
                     Text("Sonnet 5.5 · most accurate").tag(ClaudeClient.defaultModel)
                     Text("Haiku 5.5 · cheaper").tag(ClaudeClient.cheapModel)
@@ -104,40 +264,78 @@ struct SettingsView: View {
                     Spacer()
                     Text("\(usage.photos) photos · ≈ \(Fmt.rm(usage.rm))").foregroundStyle(Theme.brown2)
                 }
-            } header: {
-                sectionHeader("Claude (optional)")
             } footer: {
-                Text("Only used when Food AI is set to Claude. Create a key at platform.claude.com under API keys and add credit under Billing. The key stays in this iPhone's Keychain. The cost shown is a rough estimate.")
-                    .foregroundStyle(Theme.brown2)
+                footerText("Only used when Food AI is set to Claude. The cost shown is a rough estimate.")
+            }
+            .listRowBackground(Theme.cream)
+        }
+    }
+}
+
+// MARK: - My food
+
+struct MyFoodSettings: View {
+    @ObservedObject private var pantry = Pantry.shared
+    @State private var confirmForget = false
+
+    var body: some View {
+        SettingsPage(title: "My food") {
+            Section {
+                if pantry.products.isEmpty {
+                    Text("Scan a food label with the camera's “Food label” option and the product is saved here.")
+                        .foregroundStyle(Theme.brown2)
+                }
+                ForEach(pantry.products) { p in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(p.displayName).font(.system(size: 15, weight: .semibold, design: .rounded))
+                        Text("\(Fmt.kcal(p.kcal)) per \(p.serving)\(p.barcode.map { " · \($0)" } ?? "")")
+                            .font(.caption).foregroundStyle(Theme.brown2)
+                    }
+                }
+                .onDelete { idx in
+                    idx.map { pantry.products[$0] }.forEach { pantry.delete($0) }
+                }
+            } header: {
+                Text("Saved products").foregroundStyle(Theme.brown2)
             }
             .listRowBackground(Theme.cream)
 
             Section {
-                NavigationLink {
-                    ProductsView()
-                } label: {
-                    HStack {
-                        Text("Saved products")
-                        Spacer()
-                        Text("\(pantry.products.count)").foregroundStyle(Theme.brown2)
-                    }
+                if pantry.dishes.isEmpty {
+                    Text("Dishes you correct are remembered here, so the AI gets them right next time.")
+                        .foregroundStyle(Theme.brown2)
                 }
-                HStack {
-                    Text("Remembered dishes")
-                    Spacer()
-                    Text("\(pantry.dishes.count)").foregroundStyle(Theme.brown2)
+                ForEach(pantry.dishes.values.sorted(by: { $0.name < $1.name }), id: \.name) { d in
+                    HStack {
+                        Text(d.name)
+                        Spacer()
+                        Text(Fmt.kcal(d.kcal)).foregroundStyle(Theme.brown2)
+                    }
                 }
                 if !pantry.dishes.isEmpty {
                     Button("Forget remembered dishes", role: .destructive) { confirmForget = true }
                 }
             } header: {
-                sectionHeader("My food")
-            } footer: {
-                Text("Products come from food labels you scan. Remembered dishes are ones you corrected, so the AI gets them right next time.")
-                    .foregroundStyle(Theme.brown2)
+                Text("Remembered dishes").foregroundStyle(Theme.brown2)
             }
             .listRowBackground(Theme.cream)
+        }
+        .confirmationDialog("Forget all remembered dishes?", isPresented: $confirmForget, titleVisibility: .visible) {
+            Button("Forget", role: .destructive) { pantry.clearDishes() }
+        }
+    }
+}
 
+// MARK: - Storage
+
+struct StorageSettings: View {
+    @AppStorage(Keys.photoSide) private var photoSide = 1280
+    @AppStorage(Keys.shrinkMonths) private var shrinkMonths = 6
+    @AppStorage(Keys.shrinkSide) private var shrinkSide = 800
+    @State private var bytes: Int64 = 0
+
+    var body: some View {
+        SettingsPage(title: "Storage") {
             Section {
                 HStack {
                     Text("Pinggan is using")
@@ -171,23 +369,36 @@ struct SettingsView: View {
                 }
                 .foregroundStyle(Theme.coral)
                 .disabled(shrinkMonths == 0)
-            } header: {
-                sectionHeader("Storage")
             } footer: {
-                Text("Photos are saved as HEIC. Shrinking runs when you open the app. Cut-outs, thumbnails and meal details are never shrunk.")
-                    .foregroundStyle(Theme.brown2)
+                footerText("Photos are saved as HEIC. Shrinking runs when you open the app. Cut-outs, thumbnails and meal details are never shrunk.")
             }
             .listRowBackground(Theme.cream)
+        }
+        .onAppear { bytes = ImageStore.folderBytes() }
+    }
+}
 
+// MARK: - Backup
+
+struct BackupSettings: View {
+    @ObservedObject private var backup = BackupService.shared
+    @State private var restoreURL: URL?
+    @State private var confirmRestore = false
+    @State private var message: String?
+    @State private var exporting = false
+
+    var body: some View {
+        SettingsPage(title: "Backup") {
             Section {
                 Button {
-                    importer = .backupFolder
-                    showImporter = true
+                    FilePicker.shared.pickFolder { url in
+                        if let url { backup.setFolder(url) }
+                    }
                 } label: {
                     HStack {
                         Text("Backup folder").foregroundStyle(Theme.brown)
                         Spacer()
-                        Text(backup.folderName ?? "Choose").foregroundStyle(Theme.brown2)
+                        Text(backup.folderName.map { "\($0) ✓" } ?? "Choose").foregroundStyle(Theme.brown2)
                     }
                 }
                 HStack {
@@ -205,120 +416,99 @@ struct SettingsView: View {
                     }
                 }
                 .disabled(!backup.hasFolder || backup.running)
-                Button("Restore from backup…") {
-                    importer = .restore
-                    showImporter = true
-                }
-                .foregroundStyle(Theme.coral)
                 if !backup.status.isEmpty {
-                    Text(backup.status).font(.footnote).foregroundStyle(Theme.brown2)
+                    Text(backup.status).font(.footnote).foregroundStyle(statusColor(backup.status))
                 }
-                if let restoreMessage {
-                    Text(restoreMessage).font(.footnote).foregroundStyle(Theme.brown2)
-                }
-            } header: {
-                sectionHeader("Backup")
             } footer: {
-                Text("Pick a folder in iCloud Drive so the backup doesn't use space on this iPhone. Pinggan makes a “Pinggan Backup” folder inside it and copies only new photos each time. To restore, pick that “Pinggan Backup” folder.")
-                    .foregroundStyle(Theme.brown2)
+                footerText("Pick a folder in iCloud Drive so the backup doesn't use space on this iPhone. Pinggan makes a “Pinggan Backup” folder inside it and copies only new photos each time.")
             }
             .listRowBackground(Theme.cream)
 
             Section {
-                HStack(spacing: 12) {
-                    Image("AppIconPreview")
-                        .resizable()
-                        .frame(width: 44, height: 44)
-                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Pinggan").font(.q(16, .bold))
-                        Text("Version \(appVersion) · \(store.meals.count) meals logged").font(.caption).foregroundStyle(Theme.brown2)
+                Button {
+                    Task {
+                        exporting = true
+                        message = nil
+                        let result = await backup.makeExportZip()
+                        exporting = false
+                        switch result {
+                        case .success(let zip):
+                            FilePicker.shared.export(zip) { saved in
+                                message = saved == nil ? nil : "Backup file saved."
+                                try? FileManager.default.removeItem(at: zip.deletingLastPathComponent())
+                            }
+                        case .failure(let error):
+                            message = "The backup file couldn't be made: \(error.localizedDescription)"
+                        }
+                    }
+                } label: {
+                    HStack {
+                        Text("Export backup file…").foregroundStyle(Theme.coral)
+                        if exporting { Spacer(); ProgressView() }
                     }
                 }
+                .disabled(exporting)
+                Button("Restore from backup…") {
+                    FilePicker.shared.pickFolder { url in
+                        guard let url else { return }
+                        restoreURL = url
+                        confirmRestore = true
+                    }
+                }
+                .foregroundStyle(Theme.coral)
+                if let message {
+                    Text(message).font(.footnote).foregroundStyle(statusColor(message))
+                }
+            } footer: {
+                footerText("Export saves everything as one .zip wherever you choose. To restore, pick a “Pinggan Backup” folder (unzip an exported file first by tapping it in Files). Your meals are also visible in Files › On My iPhone › Pinggan.")
             }
             .listRowBackground(Theme.cream)
-        }
-        .creamList()
-        .toolbar(.hidden, for: .navigationBar)
-        .onAppear {
-            Task.detached(priority: .utility) {
-                let b = ImageStore.folderBytes()
-                await MainActor.run { bytes = b }
-            }
-        }
-        .fileImporter(isPresented: $showImporter, allowedContentTypes: [.folder]) { result in
-            guard case .success(let url) = result else { return }
-            switch importer {
-            case .backupFolder:
-                backup.setFolder(url)
-            case .restore:
-                restoreURL = url
-                confirmRestore = true
-            case .none:
-                break
-            }
         }
         .confirmationDialog("Replace all meals on this iPhone with the backup?", isPresented: $confirmRestore, titleVisibility: .visible) {
             Button("Restore", role: .destructive) {
                 guard let url = restoreURL else { return }
                 Task {
-                    restoreMessage = "Restoring…"
-                    restoreMessage = await backup.restore(from: url)
-                    bytes = ImageStore.folderBytes()
+                    message = "Restoring…"
+                    message = await backup.restore(from: url)
                 }
             }
         } message: {
             Text("The meals now on this iPhone are replaced by the ones in the backup.")
         }
-        .confirmationDialog("Forget all remembered dishes?", isPresented: $confirmForget, titleVisibility: .visible) {
-            Button("Forget", role: .destructive) { pantry.clearDishes() }
-        }
-    }
-
-    private func sectionHeader(_ t: String) -> some View {
-        Text(t).font(.q(12.5, .bold)).foregroundStyle(Theme.brown2)
-    }
-
-    private var appVersion: String {
-        let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
-        let b = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1"
-        return "\(v) (build \(b))"
     }
 }
 
-struct ProductsView: View {
-    @ObservedObject private var pantry = Pantry.shared
-    @Environment(\.dismiss) private var dismiss
+// MARK: - About
+
+struct AboutSettings: View {
+    @ObservedObject private var store = MealStore.shared
 
     var body: some View {
-        List {
+        SettingsPage(title: "About Pinggan") {
             Section {
-                HStack {
-                    RoundNavButton(icon: "chevron.left") { dismiss() }
-                    Text("Saved products").font(.q(22, .bold)).foregroundStyle(.white)
-                }
-                .listRowBackground(Color.clear)
-                .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
-            }
-            Section {
-                if pantry.products.isEmpty {
-                    Text("Scan a food label with the camera's “Food label” option and it will be saved here.")
-                        .foregroundStyle(Theme.brown2)
-                }
-                ForEach(pantry.products) { p in
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(p.displayName).font(.system(size: 15, weight: .semibold, design: .rounded))
-                        Text("\(Fmt.kcal(p.kcal)) per \(p.serving)\(p.barcode.map { " · \($0)" } ?? "")")
-                            .font(.caption).foregroundStyle(Theme.brown2)
+                HStack(spacing: 14) {
+                    Image("AppIconPreview").resizable().frame(width: 60, height: 60)
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Pinggan").font(.q(20, .bold))
+                        Text("Version \(appVersion)").font(.subheadline).foregroundStyle(Theme.brown2)
                     }
                 }
-                .onDelete { idx in
-                    idx.map { pantry.products[$0] }.forEach { pantry.delete($0) }
+                .padding(.vertical, 4)
+                HStack {
+                    Text("Meals logged")
+                    Spacer()
+                    Text("\(store.meals.count)").foregroundStyle(Theme.brown2)
                 }
+                HStack {
+                    Text("Dishes logged")
+                    Spacer()
+                    Text("\(store.meals.reduce(0) { $0 + $1.dishes.count })").foregroundStyle(Theme.brown2)
+                }
+            } footer: {
+                footerText("Your personal food photo journal. Everything stays on this iPhone unless you back it up.")
             }
             .listRowBackground(Theme.cream)
         }
-        .creamList()
-        .toolbar(.hidden, for: .navigationBar)
     }
 }

@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import UIKit
 
 /// Copies meals.json and the Images folder to a folder you pick in Files (e.g. iCloud Drive › Pinggan).
 /// Only new or changed photos are copied each time.
@@ -19,12 +20,16 @@ final class BackupService: ObservableObject {
     func setFolder(_ url: URL) {
         let ok = url.startAccessingSecurityScopedResource()
         defer { if ok { url.stopAccessingSecurityScopedResource() } }
+        guard ok else {
+            status = "iOS didn't give Pinggan access to “\(url.lastPathComponent)”. Try another folder."
+            return
+        }
         do {
             let data = try url.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil)
             UserDefaults.standard.set(data, forKey: Keys.backupBookmark)
             UserDefaults.standard.set(url.lastPathComponent, forKey: Keys.backupFolderName)
             folderName = url.lastPathComponent
-            status = ""
+            status = "Folder set. Backing up…"
             backupNow()
         } catch {
             status = "That folder couldn't be remembered: \(error.localizedDescription)"
@@ -206,5 +211,97 @@ enum Maintenance {
                 Maintenance.running = false
             }
         }
+    }
+}
+
+// MARK: - Folder picker and export (UIKit, opened straight from the app)
+
+/// iOS's own document picker. SwiftUI's fileImporter often ignores "Open" when picking a folder,
+/// so the picker is presented directly from the top view controller instead.
+@MainActor
+final class FilePicker: NSObject, UIDocumentPickerDelegate {
+    static let shared = FilePicker()
+    private var completion: ((URL?) -> Void)?
+
+    func pickFolder(_ completion: @escaping (URL?) -> Void) {
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.folder], asCopy: false)
+        picker.allowsMultipleSelection = false
+        present(picker, completion)
+    }
+
+    func export(_ url: URL, _ completion: @escaping (URL?) -> Void) {
+        let picker = UIDocumentPickerViewController(forExporting: [url], asCopy: true)
+        present(picker, completion)
+    }
+
+    private func present(_ picker: UIDocumentPickerViewController, _ completion: @escaping (URL?) -> Void) {
+        guard let top = Self.topViewController() else { completion(nil); return }
+        self.completion = completion
+        picker.delegate = self
+        top.present(picker, animated: true)
+    }
+
+    nonisolated func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+        let first = urls.first
+        Task { @MainActor in self.finish(first) }
+    }
+
+    nonisolated func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+        Task { @MainActor in self.finish(nil) }
+    }
+
+    private func finish(_ url: URL?) {
+        let c = completion
+        completion = nil
+        c?(url)
+    }
+
+    static func topViewController() -> UIViewController? {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let window = scenes.flatMap { $0.windows }.first { $0.isKeyWindow } ?? scenes.first?.windows.first
+        var top = window?.rootViewController
+        while let next = top?.presentedViewController { top = next }
+        return top
+    }
+}
+
+extension BackupService {
+    /// Builds a zip of meals, products and photos in the temporary folder.
+    func makeExportZip() async -> Result<URL, Error> {
+        MealStore.shared.persistNow(triggerBackup: false)
+        return await Task.detached(priority: .userInitiated) { () -> Result<URL, Error> in
+            let fm = FileManager.default
+            let stamp = Fmt.stamp.string(from: Date())
+            let work = fm.temporaryDirectory.appendingPathComponent("export-\(UUID().uuidString)", isDirectory: true)
+            let folder = work.appendingPathComponent("Pinggan Backup \(stamp)", isDirectory: true)
+            do {
+                try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+                if fm.fileExists(atPath: Paths.data.path) {
+                    try fm.copyItem(at: Paths.data, to: folder.appendingPathComponent("meals.json"))
+                }
+                if fm.fileExists(atPath: Paths.pantry.path) {
+                    try fm.copyItem(at: Paths.pantry, to: folder.appendingPathComponent("pantry.json"))
+                }
+                try fm.copyItem(at: Paths.images, to: folder.appendingPathComponent("Images", isDirectory: true))
+                var zipped: URL?
+                var copyError: Error?
+                var coordError: NSError?
+                NSFileCoordinator().coordinate(readingItemAt: folder, options: .forUploading, error: &coordError) { tmpZip in
+                    let out = work.appendingPathComponent("Pinggan-\(stamp).zip")
+                    do {
+                        try fm.copyItem(at: tmpZip, to: out)
+                        zipped = out
+                    } catch {
+                        copyError = error
+                    }
+                }
+                if let coordError { return .failure(coordError) }
+                if let copyError { return .failure(copyError) }
+                guard let zipped else { return .failure(CocoaError(.fileWriteUnknown)) }
+                return .success(zipped)
+            } catch {
+                return .failure(error)
+            }
+        }.value
     }
 }

@@ -41,6 +41,7 @@ struct RootView: View {
             case .settings: NavigationStack { SettingsView() }
             }
         }
+        .contentMargins(.bottom, 90, for: .scrollContent)
         .safeAreaInset(edge: .bottom, spacing: 0) {
             TabBar(tab: $tab) { add = AddRequest() }
         }
