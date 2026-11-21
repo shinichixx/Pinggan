@@ -11,7 +11,7 @@ struct PhotoMeta {
     var lon: Double?
 }
 
-/// Photos, thumbnails and dish cut-outs, all kept in Documents/Pinggan/Images.
+/// Photos, thumbnails and dish cut-outs, all kept privately in Application Support/Pinggan/Images.
 enum ImageStore {
     static let cache: NSCache<NSString, UIImage> = {
         let c = NSCache<NSString, UIImage>()

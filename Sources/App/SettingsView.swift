@@ -337,6 +337,11 @@ struct StorageSettings: View {
         SettingsPage(title: "Storage") {
             Section {
                 HStack {
+                    Label("Where your data is", systemImage: "lock.fill")
+                    Spacer()
+                    Text("Private to Pinggan").foregroundStyle(Theme.brown2)
+                }
+                HStack {
                     Text("Pinggan is using")
                     Spacer()
                     Text(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)).foregroundStyle(Theme.brown2)
@@ -369,7 +374,7 @@ struct StorageSettings: View {
                 .foregroundStyle(Theme.coral)
                 .disabled(shrinkMonths == 0)
             } footer: {
-                footerText("Photos are saved as HEIC. Shrinking runs when you open the app. Cut-outs, thumbnails and meal details are never shrunk.")
+                footerText("Meals, products and photos are kept inside Pinggan and don't appear in the Files app. Photos are saved as HEIC; shrinking runs when you open the app. Use Backup to save a copy to iCloud Drive.")
             }
             .listRowBackground(Theme.cream)
         }
@@ -389,6 +394,8 @@ struct BackupSettings: View {
     @State private var restoreURL: URL?
     @State private var confirmRestore = false
     @State private var message: String?
+    @State private var snapshotCount = 0
+    @State private var snapshotBytes: Int64 = 0
 
     private var reminderTime: Binding<Date> {
         Binding(get: {
@@ -449,6 +456,22 @@ struct BackupSettings: View {
             .listRowBackground(Theme.cream)
 
             Section {
+                NavigationLink {
+                    SnapshotsView()
+                } label: {
+                    HStack {
+                        Text("Snapshots on this iPhone")
+                        Spacer()
+                        Text("\(snapshotCount) · \(ByteCountFormatter.string(fromByteCount: snapshotBytes, countStyle: .file))")
+                            .foregroundStyle(Theme.brown2)
+                    }
+                }
+            } footer: {
+                footerText("A daily copy of your meal records (not photos) for the last 7 days, plus a copy made before every restore. Kept on this iPhone only and left out of iCloud backups, so they take just a few KB.")
+            }
+            .listRowBackground(Theme.cream)
+
+            Section {
                 Button("Restore from backup file…") {
                     FilePicker.shared.pickFile { url in
                         guard let url else { return }
@@ -465,7 +488,12 @@ struct BackupSettings: View {
             }
             .listRowBackground(Theme.cream)
         }
-        .onAppear { bytes = ImageStore.folderBytes() }
+        .onAppear {
+            bytes = ImageStore.folderBytes()
+            let list = Snapshots.list()
+            snapshotCount = list.count
+            snapshotBytes = list.reduce(0) { $0 + $1.bytes }
+        }
         .onChange(of: reminderOn) { Task { await BackupReminder.apply() } }
         .onChange(of: weekday) { Task { await BackupReminder.apply() } }
         .onChange(of: minutes) { Task { await BackupReminder.apply() } }
@@ -512,9 +540,60 @@ struct AboutSettings: View {
                     Text("\(store.meals.reduce(0) { $0 + $1.dishes.count })").foregroundStyle(Theme.brown2)
                 }
             } footer: {
-                footerText("Your personal food photo journal. Everything stays on this iPhone unless you back it up.")
+                footerText("Your personal food photo journal. Everything stays private on this iPhone unless you save a backup.")
             }
             .listRowBackground(Theme.cream)
+        }
+    }
+}
+
+// MARK: - Snapshots
+
+struct SnapshotsView: View {
+    @State private var items: [Snapshot] = []
+    @State private var pick: Snapshot?
+    @State private var message: String?
+
+    var body: some View {
+        SettingsPage(title: "Snapshots") {
+            Section {
+                if items.isEmpty {
+                    Text("The first snapshot is made the next time you open Pinggan with meals logged.")
+                        .foregroundStyle(Theme.brown2)
+                }
+                ForEach(items) { s in
+                    Button {
+                        pick = s
+                    } label: {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(Fmt.dayShort.string(from: s.date) + ", " + Fmt.time.string(from: s.date))
+                                    .foregroundStyle(Theme.brown)
+                                Text("\(s.kind) · \(s.meals) meals · \(ByteCountFormatter.string(fromByteCount: s.bytes, countStyle: .file))")
+                                    .font(.caption).foregroundStyle(Theme.brown2)
+                            }
+                            Spacer()
+                            Text("Restore").font(.q(14, .bold)).foregroundStyle(Theme.coral)
+                        }
+                    }
+                }
+                if let message {
+                    Text(message).font(.footnote).foregroundStyle(statusColor(message))
+                }
+            } footer: {
+                footerText("Restoring a snapshot brings back your meal records from that moment. Photos stay as they are. A copy of the current records is kept first.")
+            }
+            .listRowBackground(Theme.cream)
+        }
+        .onAppear { items = Snapshots.list() }
+        .confirmationDialog("Restore this snapshot?", isPresented: Binding(get: { pick != nil }, set: { if !$0 { pick = nil } }),
+                            titleVisibility: .visible, presenting: pick) { s in
+            Button("Restore", role: .destructive) {
+                message = Snapshots.restore(s)
+                items = Snapshots.list()
+            }
+        } message: { s in
+            Text("Your meals go back to how they were on \(Fmt.dayShort.string(from: s.date)).")
         }
     }
 }

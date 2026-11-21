@@ -3,6 +3,7 @@ import SwiftUI
 @main
 struct PingganApp: App {
     init() {
+        Paths.migrateIfNeeded()
         UserDefaults.standard.register(defaults: [
             Keys.photoSide: 1280,
             Keys.shrinkMonths: 6,
@@ -56,6 +57,7 @@ struct RootView: View {
             switch phase {
             case .active:
                 Maintenance.shrinkOldPhotos()
+                Snapshots.takeDailyIfNeeded()
                 Task { await BackupReminder.apply() }
             case .background:
                 store.persistNow(triggerBackup: false)

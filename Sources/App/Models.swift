@@ -139,20 +139,70 @@ struct Meal: Identifiable, Hashable, Codable, Sendable {
 
 // MARK: - Files
 
+/// Apple's layout: the app's own data lives privately in Application Support (not visible in Files),
+/// snapshots sit beside it but are left out of iCloud backups, scratch work goes to tmp.
 enum Paths {
-    static var root: URL {
-        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        return dir(docs.appendingPathComponent("Pinggan", isDirectory: true))
+    private static var support: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
     }
+    static var root: URL { dir(support.appendingPathComponent("Pinggan", isDirectory: true)) }
     static var images: URL { dir(root.appendingPathComponent("Images", isDirectory: true)) }
     static var data: URL { root.appendingPathComponent("meals.json") }
     static var previous: URL { root.appendingPathComponent("meals.previous.json") }
     /// Saved products (from labels / barcodes) and dishes you corrected.
     static var pantry: URL { root.appendingPathComponent("pantry.json") }
 
+    /// Small daily copies of the meal records, kept on this iPhone only.
+    static var snapshots: URL {
+        var u = dir(support.appendingPathComponent("Pinggan Snapshots", isDirectory: true))
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try? u.setResourceValues(values)
+        return u
+    }
+
+    /// Where builds 1–4 kept everything (Files › On My iPhone › Pinggan).
+    static var legacyRoot: URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Pinggan", isDirectory: true)
+    }
+
     private static func dir(_ u: URL) -> URL {
         try? FileManager.default.createDirectory(at: u, withIntermediateDirectories: true)
         return u
+    }
+
+    /// One-time move from Documents/Pinggan to private storage. Nothing is deleted until it has been moved.
+    static func migrateIfNeeded() {
+        let fm = FileManager.default
+        let old = legacyRoot
+        guard fm.fileExists(atPath: old.path) else { return }
+        let new = root
+        let newImages = images
+        let hasNewData = fm.fileExists(atPath: data.path)
+
+        // Photos and cut-outs: move any that aren't here yet.
+        let oldImages = old.appendingPathComponent("Images", isDirectory: true)
+        for u in (try? fm.contentsOfDirectory(at: oldImages, includingPropertiesForKeys: nil)) ?? [] {
+            let target = newImages.appendingPathComponent(u.lastPathComponent)
+            if !fm.fileExists(atPath: target.path) { try? fm.moveItem(at: u, to: target) }
+        }
+        // Records: only if private storage has none yet.
+        for name in ["meals.json", "meals.previous.json", "pantry.json"] {
+            let src = old.appendingPathComponent(name)
+            let dst = new.appendingPathComponent(name)
+            guard fm.fileExists(atPath: src.path) else { continue }
+            if !hasNewData || !fm.fileExists(atPath: dst.path) {
+                try? fm.removeItem(at: dst)
+                try? fm.moveItem(at: src, to: dst)
+            }
+        }
+        // Remove the old folder only once everything important is across.
+        let leftImages = (try? fm.contentsOfDirectory(atPath: oldImages.path)) ?? []
+        let leftMeals = fm.fileExists(atPath: old.appendingPathComponent("meals.json").path) && !hasNewData
+        if leftImages.isEmpty && !leftMeals {
+            try? fm.removeItem(at: old)
+        }
     }
 }
 

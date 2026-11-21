@@ -8,7 +8,7 @@ settings:
   base:
     SWIFT_VERSION: "5.0"
     MARKETING_VERSION: "1.1"
-    CURRENT_PROJECT_VERSION: "4"
+    CURRENT_PROJECT_VERSION: "5"
 targets:
   Pinggan:
     type: application
@@ -29,8 +29,6 @@ targets:
           - Quicksand-Medium.ttf
           - Quicksand-SemiBold.ttf
           - Quicksand-Bold.ttf
-        UIFileSharingEnabled: true
-        LSSupportsOpeningDocumentsInPlace: true
         NSCameraUsageDescription: Take photos of your food and food labels.
         NSLocationWhenInUseUsageDescription: Suggests the restaurant you're eating at.
         NSPhotoLibraryUsageDescription: Pick earlier food photos to log.

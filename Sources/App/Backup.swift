@@ -61,7 +61,7 @@ final class BackupService: ObservableObject {
         }
     }
 
-    /// Archives Documents/Pinggan (meals.json, pantry.json, Images) into one .aar file in the temporary folder.
+    /// Archives the private Pinggan folder (meals.json, pantry.json, Images) into one .aar file in the temporary folder.
     nonisolated static func makeArchive() -> Result<URL, Error> {
         let fm = FileManager.default
         let work = fm.temporaryDirectory.appendingPathComponent("backup-\(UUID().uuidString)", isDirectory: true)
@@ -96,6 +96,7 @@ final class BackupService: ObservableObject {
     /// Replaces everything on this iPhone with the backup file.
     func restore(fromFile file: URL) async -> String {
         MealStore.shared.persistNow(triggerBackup: false)
+        Snapshots.safetyCopy()
         let result = await Task.detached(priority: .userInitiated) { () -> String in
             let fm = FileManager.default
             let ok = file.startAccessingSecurityScopedResource()
@@ -274,3 +275,106 @@ enum Maintenance {
     }
 }
 
+
+// MARK: - Local snapshots (records only, kept on this iPhone, left out of iCloud backups)
+
+struct Snapshot: Identifiable {
+    let url: URL
+    let date: Date
+    let kind: String
+    let meals: Int
+    let bytes: Int64
+    var id: String { url.lastPathComponent }
+}
+
+/// Daily copies of meals.json and pantry.json (photos aren't copied, so they take only a few KB),
+/// plus a safety copy before every restore. Keeps the last 7 daily and the last 2 safety copies.
+enum Snapshots {
+    private static let dailyPrefix = "daily-"
+    private static let safetyPrefix = "before-restore-"
+    private static let stampFormat: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd_HH-mm-ss"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        return f
+    }()
+
+    static func takeDailyIfNeeded() {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: Paths.data.path) else { return }
+        let today = Fmt.stamp.string(from: Date())
+        let existing = (try? fm.contentsOfDirectory(atPath: Paths.snapshots.path)) ?? []
+        guard !existing.contains(where: { $0.hasPrefix(dailyPrefix + today) }) else { return }
+        copyRecords(named: dailyPrefix + stampFormat.string(from: Date()))
+        prune(prefix: dailyPrefix, keep: 7)
+    }
+
+    static func safetyCopy() {
+        guard FileManager.default.fileExists(atPath: Paths.data.path) else { return }
+        copyRecords(named: safetyPrefix + stampFormat.string(from: Date()))
+        prune(prefix: safetyPrefix, keep: 2)
+    }
+
+    private static func copyRecords(named name: String) {
+        let fm = FileManager.default
+        let dir = Paths.snapshots.appendingPathComponent(name, isDirectory: true)
+        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        for src in [Paths.data, Paths.pantry] where fm.fileExists(atPath: src.path) {
+            try? fm.copyItem(at: src, to: dir.appendingPathComponent(src.lastPathComponent))
+        }
+    }
+
+    private static func prune(prefix: String, keep: Int) {
+        let fm = FileManager.default
+        let names = ((try? fm.contentsOfDirectory(atPath: Paths.snapshots.path)) ?? [])
+            .filter { $0.hasPrefix(prefix) }
+            .sorted(by: >)
+        for n in names.dropFirst(keep) {
+            try? fm.removeItem(at: Paths.snapshots.appendingPathComponent(n))
+        }
+    }
+
+    static func list() -> [Snapshot] {
+        let fm = FileManager.default
+        let names = (try? fm.contentsOfDirectory(atPath: Paths.snapshots.path)) ?? []
+        return names.compactMap { n -> Snapshot? in
+            let url = Paths.snapshots.appendingPathComponent(n, isDirectory: true)
+            let kind: String
+            let stamp: String
+            if n.hasPrefix(dailyPrefix) { kind = "Daily"; stamp = String(n.dropFirst(dailyPrefix.count)) }
+            else if n.hasPrefix(safetyPrefix) { kind = "Before restore"; stamp = String(n.dropFirst(safetyPrefix.count)) }
+            else { return nil }
+            guard let date = stampFormat.date(from: stamp) else { return nil }
+            let json = url.appendingPathComponent("meals.json")
+            let data = (try? Data(contentsOf: json)) ?? Data()
+            let count = ((try? JSONSerialization.jsonObject(with: data)) as? [Any])?.count ?? 0
+            var bytes: Int64 = 0
+            for f in (try? fm.contentsOfDirectory(at: url, includingPropertiesForKeys: [.fileSizeKey])) ?? [] {
+                bytes += Int64((try? f.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
+            }
+            return Snapshot(url: url, date: date, kind: kind, meals: count, bytes: bytes)
+        }
+        .sorted { $0.date > $1.date }
+    }
+
+    static var totalBytes: Int64 { list().reduce(0) { $0 + $1.bytes } }
+
+    /// Puts a snapshot's records back (after making a safety copy of the current ones).
+    @MainActor
+    static func restore(_ s: Snapshot) -> String {
+        guard let data = try? Data(contentsOf: s.url.appendingPathComponent("meals.json")),
+              (try? JSON.decoder.decode([Meal].self, from: data)) != nil else { return "That snapshot couldn't be read." }
+        MealStore.shared.persistNow(triggerBackup: false)
+        safetyCopy()
+        do {
+            try data.write(to: Paths.data, options: .atomic)
+            let pantry = s.url.appendingPathComponent("pantry.json")
+            if let p = try? Data(contentsOf: pantry) { try p.write(to: Paths.pantry, options: .atomic) }
+        } catch {
+            return "Restore failed: \(error.localizedDescription)"
+        }
+        MealStore.shared.load()
+        Pantry.shared.load()
+        return "Restored \(s.meals) meals from \(Fmt.dayShort.string(from: s.date))."
+    }
+}
