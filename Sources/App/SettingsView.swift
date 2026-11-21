@@ -84,9 +84,8 @@ struct SettingsView: View {
     }
 
     private var backupSummary: String {
-        guard let name = backup.folderName else { return "Not set up" }
-        if let d = backup.lastBackup { return "\(name) · \(Fmt.dayShort.string(from: d))" }
-        return name
+        guard let d = backup.lastBackup else { return "No backup saved yet" }
+        return "Last saved \(Fmt.dayShort.string(from: d))"
     }
 
     private var divider: some View { Divider().overlay(Theme.line).padding(.leading, 56) }
@@ -382,74 +381,76 @@ struct StorageSettings: View {
 
 struct BackupSettings: View {
     @ObservedObject private var backup = BackupService.shared
+    @ObservedObject private var store = MealStore.shared
+    @AppStorage(BackupReminder.enabledKey) private var reminderOn = true
+    @AppStorage(BackupReminder.weekdayKey) private var weekday = 1
+    @AppStorage(BackupReminder.minutesKey) private var minutes = 21 * 60
+    @State private var bytes: Int64 = 0
     @State private var restoreURL: URL?
     @State private var confirmRestore = false
     @State private var message: String?
-    @State private var exporting = false
+
+    private var reminderTime: Binding<Date> {
+        Binding(get: {
+            Calendar.current.date(bySettingHour: minutes / 60, minute: minutes % 60, second: 0, of: Date()) ?? Date()
+        }, set: { d in
+            let c = Calendar.current.dateComponents([.hour, .minute], from: d)
+            minutes = (c.hour ?? 21) * 60 + (c.minute ?? 0)
+        })
+    }
 
     var body: some View {
         SettingsPage(title: "Backup") {
             Section {
-                Button {
-                    FilePicker.shared.pickFolder { url in
-                        if let url { backup.setFolder(url) }
-                    }
-                } label: {
-                    HStack {
-                        Text("Backup folder").foregroundStyle(Theme.brown)
-                        Spacer()
-                        Text(backup.folderName.map { "\($0) ✓" } ?? "Choose").foregroundStyle(Theme.brown2)
-                    }
-                }
                 HStack {
-                    Text("Last backup")
+                    Text("Last saved backup")
                     Spacer()
                     Text(backup.lastBackup.map { Fmt.dayShort.string(from: $0) + ", " + Fmt.time.string(from: $0) } ?? "Never")
                         .foregroundStyle(Theme.brown2)
                 }
                 Button {
-                    backup.backupNow()
+                    backup.saveBackup()
                 } label: {
                     HStack {
-                        Text("Back up now").foregroundStyle(Theme.coral)
-                        if backup.running { Spacer(); ProgressView() }
+                        Label("Save backup to iCloud Drive…", systemImage: "icloud.and.arrow.up")
+                            .font(.system(size: 16, weight: .semibold, design: .rounded))
+                            .foregroundStyle(Theme.coral)
+                        if backup.working { Spacer(); ProgressView() }
                     }
                 }
-                .disabled(!backup.hasFolder || backup.running)
+                .disabled(backup.working)
+                HStack {
+                    Text("Backup size")
+                    Spacer()
+                    Text("\(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)) · \(store.meals.count) meals")
+                        .foregroundStyle(Theme.brown2)
+                }
                 if !backup.status.isEmpty {
                     Text(backup.status).font(.footnote).foregroundStyle(statusColor(backup.status))
                 }
             } footer: {
-                footerText("Pick a folder in iCloud Drive so the backup doesn't use space on this iPhone. Pinggan makes a “Pinggan Backup” folder inside it and copies only new photos each time.")
+                footerText("Saves one file with your meals, products and photos. Choose iCloud Drive › Pinggan; the file is kept even if you delete the app.")
             }
             .listRowBackground(Theme.cream)
 
             Section {
-                Button {
-                    Task {
-                        exporting = true
-                        message = nil
-                        let result = await backup.makeExportZip()
-                        exporting = false
-                        switch result {
-                        case .success(let zip):
-                            FilePicker.shared.export(zip) { saved in
-                                message = saved == nil ? nil : "Backup file saved."
-                                try? FileManager.default.removeItem(at: zip.deletingLastPathComponent())
-                            }
-                        case .failure(let error):
-                            message = "The backup file couldn't be made: \(error.localizedDescription)"
+                Toggle("Weekly reminder", isOn: $reminderOn).tint(Theme.coral)
+                if reminderOn {
+                    Picker("Remind me on", selection: $weekday) {
+                        ForEach(1...7, id: \.self) { d in
+                            Text(Calendar.current.weekdaySymbols[d - 1]).tag(d)
                         }
                     }
-                } label: {
-                    HStack {
-                        Text("Export backup file…").foregroundStyle(Theme.coral)
-                        if exporting { Spacer(); ProgressView() }
-                    }
+                    DatePicker("At", selection: reminderTime, displayedComponents: .hourAndMinute)
                 }
-                .disabled(exporting)
-                Button("Restore from backup…") {
-                    FilePicker.shared.pickFolder { url in
+            } footer: {
+                footerText("Today also shows a small banner when your last backup is over 7 days old.")
+            }
+            .listRowBackground(Theme.cream)
+
+            Section {
+                Button("Restore from backup file…") {
+                    FilePicker.shared.pickFile { url in
                         guard let url else { return }
                         restoreURL = url
                         confirmRestore = true
@@ -460,16 +461,21 @@ struct BackupSettings: View {
                     Text(message).font(.footnote).foregroundStyle(statusColor(message))
                 }
             } footer: {
-                footerText("Export saves everything as one .zip wherever you choose. To restore, pick a “Pinggan Backup” folder (unzip an exported file first by tapping it in Files). Your meals are also visible in Files › On My iPhone › Pinggan.")
+                footerText("Pick a saved Pinggan backup (.aar) file. It replaces the meals on this iPhone.")
             }
             .listRowBackground(Theme.cream)
         }
+        .onAppear { bytes = ImageStore.folderBytes() }
+        .onChange(of: reminderOn) { Task { await BackupReminder.apply() } }
+        .onChange(of: weekday) { Task { await BackupReminder.apply() } }
+        .onChange(of: minutes) { Task { await BackupReminder.apply() } }
         .confirmationDialog("Replace all meals on this iPhone with the backup?", isPresented: $confirmRestore, titleVisibility: .visible) {
             Button("Restore", role: .destructive) {
                 guard let url = restoreURL else { return }
                 Task {
                     message = "Restoring…"
-                    message = await backup.restore(from: url)
+                    message = await backup.restore(fromFile: url)
+                    bytes = ImageStore.folderBytes()
                 }
             }
         } message: {

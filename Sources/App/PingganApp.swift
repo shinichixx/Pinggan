@@ -8,7 +8,10 @@ struct PingganApp: App {
             Keys.shrinkMonths: 6,
             Keys.shrinkSide: 800,
             Keys.aiModel: ClaudeClient.defaultModel,
-            Keys.aiMode: AIMode.onDevice.rawValue
+            Keys.aiMode: AIMode.onDevice.rawValue,
+            BackupReminder.enabledKey: true,
+            BackupReminder.weekdayKey: 1,
+            BackupReminder.minutesKey: 21 * 60
         ])
     }
 
@@ -53,9 +56,9 @@ struct RootView: View {
             switch phase {
             case .active:
                 Maintenance.shrinkOldPhotos()
+                Task { await BackupReminder.apply() }
             case .background:
                 store.persistNow(triggerBackup: false)
-                BackupService.shared.backupNow()
             default:
                 break
             }
@@ -98,10 +101,15 @@ struct TabBar: View {
 
     private func item(_ t: AppTab, _ icon: String, _ label: String) -> some View {
         Button { tab = t } label: {
-            VStack(spacing: 2) {
-                Image(systemName: icon).font(.system(size: 21, weight: .medium))
-                Text(label).font(.system(size: 10.5, weight: .bold, design: .rounded))
+            VStack(spacing: 3) {
+                Image(systemName: icon)
+                    .font(.system(size: 21, weight: .medium))
+                    .frame(height: 24, alignment: .bottom)
+                Text(label)
+                    .font(.system(size: 10.5, weight: .bold, design: .rounded))
+                    .frame(height: 13)
             }
+            .frame(height: 40, alignment: .bottom)
             .foregroundStyle(tab == t ? Theme.coral : Theme.brown3)
             .frame(maxWidth: .infinity)
         }
@@ -115,6 +123,7 @@ struct TodayView: View {
     var onAdd: (AddRequest) -> Void
 
     @ObservedObject private var store = MealStore.shared
+    @ObservedObject private var backup = BackupService.shared
     @State private var day = Date()
 
     private var meals: [Meal] { store.meals(on: day) }
@@ -149,6 +158,31 @@ struct TodayView: View {
                                 .opacity(isToday ? 0.45 : 1)
                                 .disabled(isToday)
                         }
+                    }
+
+                    if isToday && backup.isDue {
+                        HStack(spacing: 12) {
+                            Image(systemName: "icloud.and.arrow.up")
+                                .font(.system(size: 18, weight: .semibold)).foregroundStyle(.white)
+                                .frame(width: 36, height: 36)
+                                .background(Circle().fill(Theme.button))
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text("Time to back up").font(.q(15, .bold)).foregroundStyle(Theme.brown)
+                                Text(backup.daysSince.map { "Last backup \($0) days ago" } ?? "No backup saved yet")
+                                    .font(.system(size: 12, weight: .semibold, design: .rounded)).foregroundStyle(Theme.brown2)
+                            }
+                            Spacer()
+                            Button {
+                                backup.saveBackup()
+                            } label: {
+                                if backup.working { ProgressView() } else { Text("Save").font(.q(14, .bold)) }
+                            }
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 16).frame(height: 34)
+                            .background(Capsule().fill(Theme.button))
+                            .buttonStyle(.plain)
+                        }
+                        .creamCard(padding: 12)
                     }
 
                     if let problem = store.problem {
